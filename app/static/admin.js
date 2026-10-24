@@ -341,6 +341,9 @@
     auto.addEventListener("click", function () {
       var reclaimUrl = uploadForm.getAttribute("data-reclaim-url");
       if (!reclaimUrl) return;
+      if (!window.confirm("将按最久未处理的顺序永久删除回收站图片，直到能放下这批上传。删除后无法恢复，继续吗？")) {
+        return;
+      }
       var original = auto.textContent;
       auto.disabled = true;
       auto.textContent = "正在清理…";
