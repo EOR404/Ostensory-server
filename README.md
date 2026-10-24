@@ -183,6 +183,7 @@ python -m app.cli update --yes --restart  # 安装后执行环境变量里的重
 更新规则：
 
 - 检查更新默认读取 GitHub Releases 的公开 Atom 订阅，并直接拼出 Release 资产地址；这条路径不消耗 GitHub API 限额，普通部署不需要配置 Token。GitHub API 只作为备用路径。
+- 0.1.1 及更早版本的检查器仍走旧 GitHub API；如果那些部署看到“GitHub 拒绝了更新检查”，请先手动下载 0.1.2 的 `ostensory-server.tar.gz` 升级一次。升级后就会改用上面的 Atom 路径，不再受这个 API 限额影响。
 - 如果部署在 GitHub 之外的镜像，可用 `OSTENSORY_UPDATE_FEED` 指向 Atom 订阅，用 `OSTENSORY_UPDATE_DOWNLOAD_ROOT` 指向下载根地址（默认从订阅地址推导）。只有访问私有 Release 或需要 API 备用路径时才考虑 `OSTENSORY_UPDATE_TOKEN`。
 - 始终按版本号选择最新 Release，直接跳版，不要求逐个版本升级。
 - 当前版本含 `dev`/`alpha`/`beta`/`rc` 时允许预发布版本；稳定版只接受正式 Release。
