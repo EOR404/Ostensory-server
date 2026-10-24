@@ -36,7 +36,7 @@
       <div><dt>当前相册</dt><dd>{{ asset.album_name or '未分类' }}</dd></div>
       <div><dt>当前匣子</dt><dd>{{ asset.box_name or '未分组' }}</dd></div>
       <div><dt>上传时间</dt><dd>{{ asset.created_at|datetime }}</dd></div>
-      <div><dt>状态</dt><dd>{% if asset.status == 'pending' %}待审核{% elif asset.status == 'rejected' %}未通过{% else %}已发布{% endif %}{% if asset.visibility == 'private' %} · 仅自己{% endif %}{% if asset.nsfw %} · NSFW{% endif %}</dd></div>
+      <div><dt>状态</dt><dd>{% if asset.status == 'pending' %}待审核{% elif asset.status == 'rejected' %}未通过{% else %}已发布{% endif %}{% if asset.visibility == 'private' %} · 仅自己{% endif %}{% if asset.nsfw %} · NSFW{% endif %}{% if asset.nsfw_locked %} · NSFW 已锁定{% endif %}</dd></div>
     </dl>
     {% if metadata.positive_prompt is string and metadata.positive_prompt %}
     <p class="muted small">正向提示词：</p>
@@ -101,7 +101,12 @@
         </select>
       </label>
 
+      {% if asset.nsfw_locked %}
+      <label class="check"><input type="checkbox" {% if asset.nsfw %}checked{% endif %} disabled> NSFW（管理员已锁定，不能自行修改）</label>
+      <p class="muted small">这张图片的 NSFW 状态由管理员锁定。如需修改，请联系管理员在后台解锁。</p>
+      {% else %}
       <label class="check"><input type="checkbox" name="nsfw" value="1" {% if asset.nsfw %}checked{% endif %}> NSFW（访客默认模糊）</label>
+      {% endif %}
 
       {% if settings.experimental_features == '1' %}
       <fieldset class="settings-fieldset">

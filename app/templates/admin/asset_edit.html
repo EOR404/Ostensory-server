@@ -111,8 +111,10 @@
       {% endif %}
       <div class="check-row">
         <label class="check"><input type="checkbox" name="nsfw" value="1" {% if asset.nsfw %}checked{% endif %}> NSFW（访客默认模糊）</label>
+        <label class="check"><input type="checkbox" name="nsfw_locked" value="1" {% if asset.nsfw_locked %}checked{% endif %}> 锁定 NSFW（作者不可改）</label>
         <label class="check"><input type="checkbox" name="encrypt" value="1" {% if asset.encrypted %}checked{% endif %}> AES-256-GCM 落盘加密</label>
       </div>
+      <p class="muted small">“锁定 NSFW”只有同时勾选 NSFW 才生效。临时勾选 NSFW 而不锁定，上传者可以自行修改；锁定后只有管理员能解锁。</p>
       <fieldset class="fieldset">
         <legend>访问密码</legend>
         <p class="muted small">{% if asset.access_password_hash %}已设置独立密码；留空保持不变。{% else %}未设置独立密码，可继承相册密码。{% endif %}</p>

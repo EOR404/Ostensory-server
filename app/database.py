@@ -134,6 +134,12 @@ def init_db(config: Config) -> None:
             conn.execute(
                 "ALTER TABLE assets ADD COLUMN views INTEGER NOT NULL DEFAULT 0"
             )
+        if "nsfw_locked" not in asset_columns:
+            # Existing images remain editable by their uploaders until an
+            # administrator explicitly locks NSFW during review or later.
+            conn.execute(
+                "ALTER TABLE assets ADD COLUMN nsfw_locked INTEGER NOT NULL DEFAULT 0"
+            )
         if "reviewed_at" not in asset_columns:
             conn.execute("ALTER TABLE assets ADD COLUMN reviewed_at TEXT")
         if "review_note" not in asset_columns:

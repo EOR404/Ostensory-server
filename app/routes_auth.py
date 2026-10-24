@@ -738,6 +738,15 @@ def account_asset_edit_submit(
 
     if visibility not in {"public", "private"}:
         visibility = "public"
+    current_nsfw = 1 if asset["nsfw"] else 0
+    submitted_nsfw = 1 if nsfw == "1" else 0
+    nsfw_value = current_nsfw
+    nsfw_locked = bool(asset["nsfw_locked"])
+    lock_note = None
+    if not nsfw_locked:
+        nsfw_value = submitted_nsfw
+    elif submitted_nsfw != current_nsfw:
+        lock_note = "管理员已锁定这张图片的 NSFW 状态，本次没有修改。"
     intro_size = parse_int(intro_font_size, 15, 10, 72)
     intro_style = intro_font_style if intro_font_style in INTRO_STYLE_MAP else "italic"
     intro_color_value = intro_color.strip()[:40]
@@ -777,7 +786,7 @@ def account_asset_edit_submit(
             new_album_id,
             int(new_album["box_id"]) if new_album and new_album["box_id"] else None,
             visibility,
-            1 if nsfw == "1" else 0,
+            nsfw_value,
             password_hash,
             validate_region_mode(region_mode),
             countries_json(region_countries),
@@ -790,10 +799,15 @@ def account_asset_edit_submit(
         "user.asset_update",
         actor=user["username"],
         target=str(asset_id),
-        detail=f"album={new_album_id} visibility={visibility} nsfw={nsfw}",
+        detail=(
+            f"album={new_album_id} visibility={visibility} "
+            f"nsfw={nsfw_value} locked={nsfw_locked}"
+        ),
     )
     db.commit()
     message = "图片设置已保存。"
+    if lock_note:
+        message += " " + lock_note
     if password_note:
         message += " " + password_note
     if color_invalid:

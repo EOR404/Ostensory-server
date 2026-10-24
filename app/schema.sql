@@ -160,6 +160,7 @@ CREATE TABLE IF NOT EXISTS assets (
     negative_prompt TEXT NOT NULL DEFAULT '',
     lora_names TEXT NOT NULL DEFAULT '',
     nsfw INTEGER NOT NULL DEFAULT 0,
+    nsfw_locked INTEGER NOT NULL DEFAULT 0,
     access_password_hash TEXT,
     region_mode TEXT NOT NULL DEFAULT 'inherit',
     region_countries TEXT NOT NULL DEFAULT '[]',

@@ -37,10 +37,12 @@
           <label>标记
             <span class="check-row">
               <label class="check"><input type="checkbox" name="nsfw" value="1" {% if item.nsfw %}checked{% endif %}> NSFW</label>
+              <label class="check"><input type="checkbox" name="nsfw_locked" value="1" {% if item.nsfw_locked %}checked{% endif %}> 锁定 NSFW（作者不可改）</label>
               <label class="check"><input type="checkbox" name="encrypt" value="1" {% if item.encrypted %}checked{% endif %}> 加密存储</label>
             </span>
           </label>
         </div>
+        <p class="muted small">只勾选 NSFW 是临时标记，作者之后仍可修改；再勾选“锁定 NSFW”后，只有管理员能解锁或取消 NSFW。</p>
         <div class="two-col">
           <label>加密 / 访问密码（可选，留空保持原值）<input type="password" name="password" maxlength="200" autocomplete="new-password" placeholder="设置后查看详情和原图需要密码"></label>
           <label class="check"><input type="checkbox" name="clear_password" value="1"> 清除已有访问密码</label>

@@ -1184,6 +1184,7 @@ def asset_edit_submit(
     album_id: str = Form(""),
     box_id: str = Form(""),
     nsfw: str = Form(""),
+    nsfw_locked: str = Form(""),
     region_mode: str = Form("inherit"),
     region_countries: str = Form(""),
     password: str = Form(""),
@@ -1229,10 +1230,12 @@ def asset_edit_submit(
         except OSError as exc:
             db.rollback()
             return flash_redirect(admin_url(request, f"/assets/{asset_id}"), f"加密切换失败：{exc}")
+    nsfw_value = 1 if nsfw == "1" else 0
+    nsfw_lock_value = 1 if nsfw_value and nsfw_locked == "1" else 0
     db.execute(
         "UPDATE assets SET title = ?, description = ?, intro_font_size = ?, "
         "intro_font_style = ?, intro_quote = ?, intro_color = ?, intro_allow_html = ?, "
-        "album_id = ?, box_id = ?, nsfw = ?, "
+        "album_id = ?, box_id = ?, nsfw = ?, nsfw_locked = ?, "
         "access_password_hash = ?, region_mode = ?, region_countries = ?, updated_at = ? WHERE id = ?",
         (
             title.strip()[:300] or asset["original_name"],
@@ -1244,7 +1247,8 @@ def asset_edit_submit(
             1 if intro_allow_html == "1" else 0,
             new_album_id,
             new_box_id,
-            1 if nsfw == "1" else 0,
+            nsfw_value,
+            nsfw_lock_value,
             password_hash,
             validate_region_mode(region_mode),
             countries_json(region_countries),
@@ -1257,7 +1261,9 @@ def asset_edit_submit(
         "asset.update",
         actor=admin["username"],
         target=str(asset_id),
-        detail=f"nsfw={nsfw} encrypted={want_encrypt}",
+        detail=(
+            f"nsfw={nsfw_value} locked={nsfw_lock_value} encrypted={want_encrypt}"
+        ),
         ip=getattr(request.state, "client_ip", ""),
     )
     db.commit()
@@ -3269,6 +3275,7 @@ def review_submit(
     album_id: str = Form(""),
     visibility: str = Form("public"),
     nsfw: str = Form(""),
+    nsfw_locked: str = Form(""),
     encrypt: str = Form(""),
     password: str = Form(""),
     clear_password: str = Form(""),
@@ -3290,15 +3297,17 @@ def review_submit(
         return flash_redirect(admin_url(request, "/review"), "目标相册不存在。")
     now = utc_now()
     status = "approved" if action == "approve" else "rejected"
+    nsfw_value = 1 if nsfw == "1" else 0
+    nsfw_lock_value = 1 if nsfw_value and nsfw_locked == "1" else 0
     password_hash = asset["access_password_hash"]
     if clear_password == "1":
         password_hash = None
     elif password.strip():
         password_hash = hash_password(password.strip()[:200])
     db.execute(
-        "UPDATE assets SET status = ?, visibility = ?, nsfw = ?, album_id = ?, "
-        "box_id = ?, access_password_hash = ?, reviewed_at = ?, review_note = ?, "
-        "updated_at = ? WHERE id = ?",
+        "UPDATE assets SET status = ?, visibility = ?, nsfw = ?, nsfw_locked = ?, "
+        "album_id = ?, box_id = ?, access_password_hash = ?, reviewed_at = ?, "
+        "review_note = ?, updated_at = ? WHERE id = ?",
         (
             status,
             (
@@ -3306,7 +3315,8 @@ def review_submit(
                 if status == "rejected"
                 else (visibility if visibility in {"public", "private"} else "public")
             ),
-            1 if nsfw == "1" else 0,
+            nsfw_value,
+            nsfw_lock_value,
             album["id"] if album else asset["album_id"],
             album["box_id"] if album else asset["box_id"],
             password_hash,
@@ -3331,6 +3341,7 @@ def review_submit(
         target=str(asset_id),
         detail=(
             f"{status} album={album['id'] if album else asset['album_id']} "
+            f"nsfw={nsfw_value} locked={nsfw_lock_value} "
             f"encrypted={encrypt == '1'}"
         ),
         ip=getattr(request.state, "client_ip", ""),
