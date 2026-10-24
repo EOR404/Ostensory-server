@@ -173,7 +173,7 @@
   </form>
   <div class="table-wrap">
     <table class="table asset-table">
-      <thead><tr><th class="select-col"><input type="checkbox" data-bulk-all data-bulk-group="assets" aria-label="全选本页图片"></th><th>图片</th><th>名称</th><th>相册</th><th>匣子</th><th>元数据</th><th>状态</th><th>大小</th><th></th></tr></thead>
+      <thead><tr><th class="select-col"><input type="checkbox" data-bulk-all data-bulk-group="assets" aria-label="全选本页图片"></th><th>图片</th><th>名称</th><th>作者</th><th>相册</th><th>匣子</th><th>元数据</th><th>状态</th><th>大小</th><th></th></tr></thead>
       <tbody>
         {% for asset in assets %}
         {% set meta = metadata_map.get(asset.id, {}) %}
@@ -181,10 +181,11 @@
           <td class="select-col"><input type="checkbox" name="asset_ids" value="{{ asset.id }}" form="asset-bulk-form" data-bulk-item data-bulk-group="assets" aria-label="选择图片 #{{ asset.id }}"></td>
           <td><a class="thumb-link" href="{{ admin_url('/assets/' ~ asset.id) }}"><img src="{{ media_url(asset.id, 'thumb', asset.sha256) }}" alt="" loading="lazy"></a></td>
           <td><a href="{{ admin_url('/assets/' ~ asset.id) }}">{{ asset.title or asset.original_name }}</a><div class="muted small">#{{ asset.id }} · {{ asset.original_name }}</div>{% if asset.upload_ip %}<div class="muted small">访客 IP {{ asset.upload_ip }}</div>{% endif %}</td>
+          <td>{% if asset.owner_id %}<a href="{{ admin_url('/users/' ~ asset.owner_id) }}">{{ asset_author_name(asset) }}</a>{% else %}{{ asset_author_name(asset) }}{% endif %}</td>
           <td>{{ asset.album_name or '未分类' }}</td>
           <td>{% if asset.box_name %}<a href="{{ admin_url('/boxes/' ~ asset.box_id) }}">{{ asset.box_name }}</a>{% else %}<span class="muted">—</span>{% endif %}</td>
           <td><span class="mini-tag">{{ meta.kind or 'unknown' }}</span>{% if meta.loras %}<span class="muted small">{{ meta.loras|length }} LoRA</span>{% endif %}{% if meta.base_model %}<div class="muted small">{{ meta.base_model }}</div>{% endif %}</td>
-          <td><span class="mini-tag {% if asset.nsfw %}danger{% endif %}">{{ 'NSFW' if asset.nsfw else '公开' }}</span>{% if asset.encrypted %}<span class="mini-tag">加密</span>{% endif %}{% if asset.deleted_at %}<span class="mini-tag danger">已删除</span>{% endif %}</td>
+          <td><span class="mini-tag {% if asset.nsfw %}danger{% endif %}">{{ 'NSFW' if asset.nsfw else '公开' }}</span>{% if asset.encrypted %}<span class="mini-tag">加密</span>{% endif %}{% if asset.status == 'pending' %}<span class="mini-tag danger">待审核</span>{% elif asset.status == 'rejected' %}<span class="mini-tag danger">已拒绝</span>{% endif %}{% if asset.visibility == 'private' %}<span class="mini-tag">仅作者</span>{% endif %}{% if asset.deleted_at %}<span class="mini-tag danger">已删除</span>{% endif %}</td>
           <td class="nowrap">{{ asset.size|filesize }}</td>
           <td class="nowrap actions">
             <a href="/images/{{ asset.id }}" target="_blank" rel="noopener">查看</a>

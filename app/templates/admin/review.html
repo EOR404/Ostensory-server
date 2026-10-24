@@ -1,0 +1,61 @@
+{% extends "admin/base_admin.html" %}
+{% block title %}审核队列 · 管理后台{% endblock %}
+{% block content %}
+<div class="page-title">
+  <div><p class="eyebrow">MODERATION</p><h1>审核队列</h1><p class="muted">待审核 {{ review_items|length }} 张。通过前不会出现在公开页面。</p></div>
+</div>
+{% if review_items %}
+<div class="review-list">
+  {% for item in review_items %}
+  <article class="panel review-item">
+    <a class="review-preview" href="{{ admin_url('/assets/' ~ item.id) }}" target="_blank" rel="noopener">
+      <img src="{{ media_url(item.id, 'preview', item.sha256 if settings.preview_enabled == '1' else 'o' ~ item.sha256) }}" alt="" loading="lazy">
+    </a>
+    <div class="review-body">
+      <div class="review-head">
+        <div>
+          <h2>{{ item.title or item.original_name }}</h2>
+          <p class="muted small">#{{ item.id }} · {{ item.author }} · {{ item.original_name }}</p>
+        </div>
+        <span class="status-pill status-pending">待审核</span>
+      </div>
+      {% if item.description %}<p class="review-desc">{{ item.description|truncate(300) }}</p>{% endif %}
+      <form method="post" action="{{ admin_url('/review/' ~ item.id) }}" class="review-form">
+        <input type="hidden" name="csrf" value="{{ csrf_token }}">
+        <div class="three-col">
+          <label>通过后放入相册
+            <select name="album_id">
+              {% for album in albums %}<option value="{{ album.id }}" {% if album.id == item.album_id %}selected{% endif %}>{{ '— ' * album.depth }}{{ album.path }}</option>{% endfor %}
+            </select>
+          </label>
+          <label>可见性
+            <select name="visibility">
+              <option value="public" {% if item.visibility != 'private' %}selected{% endif %}>公开</option>
+              <option value="private" {% if item.visibility == 'private' %}selected{% endif %}>仅作者可见</option>
+            </select>
+          </label>
+          <label>标记
+            <span class="check-row">
+              <label class="check"><input type="checkbox" name="nsfw" value="1" {% if item.nsfw %}checked{% endif %}> NSFW</label>
+              <label class="check"><input type="checkbox" name="encrypt" value="1" {% if item.encrypted %}checked{% endif %}> 加密存储</label>
+            </span>
+          </label>
+        </div>
+        <div class="two-col">
+          <label>加密 / 访问密码（可选，留空保持原值）<input type="password" name="password" maxlength="200" autocomplete="new-password" placeholder="设置后查看详情和原图需要密码"></label>
+          <label class="check"><input type="checkbox" name="clear_password" value="1"> 清除已有访问密码</label>
+        </div>
+        <label>审核备注（作者在账户页可见）<textarea name="review_note" rows="2" maxlength="1000">{{ item.review_note }}</textarea></label>
+        <div class="inline-actions">
+          <button class="button" type="submit" name="action" value="approve">通过审核</button>
+          <button class="button ghost danger" type="submit" name="action" value="reject" data-confirm="拒绝后图片不会公开，作者仍能在账户中看到。确定拒绝？">拒绝</button>
+        </div>
+      </form>
+    </div>
+  </article>
+  {% endfor %}
+</div>
+{% else %}
+<div class="empty-state"><p class="empty-title">没有待审核图片</p><p>用户上传并开启审核后，会在这里出现。</p></div>
+{% endif %}
+{% endblock %}

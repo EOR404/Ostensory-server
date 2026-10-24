@@ -3,7 +3,7 @@ services:
     build:
       context: ..
       dockerfile: deploy/Dockerfile
-    image: ostensory:0.0.1dev
+    image: ostensory:0.1.0
     container_name: ostensory
     restart: unless-stopped
     ports:
@@ -13,6 +13,9 @@ services:
       OSTENSORY_HOST: 0.0.0.0
       OSTENSORY_PORT: "8000"
       OSTENSORY_SECURE_COOKIES: auto
+      # 导入前的完整备份不能放在 /data 里面（会被替换），而 /data 的上级目录
+      # 在容器里通常是只读的根目录；因此单独挂一个持久卷。
+      OSTENSORY_MIGRATION_STATE_DIR: /app/migration-backups
       # 宿主机 nginx 直接反代 127.0.0.1:8000 时，容器看到的对端通常是
       # Docker 网桥网关（常见 172.17.0.1），必须把它加入可信代理，
       # 否则地区限制会把所有访客都当成同一个网关 IP。
@@ -22,9 +25,13 @@ services:
       # OSTENSORY_MASTER_KEY: "64位十六进制，建议只放在 Docker secret 或 .env"
     volumes:
       - ../data:/data
+      - ostensory-migration:/app/migration-backups
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=3)"]
       interval: 30s
       timeout: 5s
       retries: 3
       start_period: 15s
+
+volumes:
+  ostensory-migration:

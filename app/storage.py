@@ -268,6 +268,7 @@ class Storage:
         allowed_extensions: set[str],
         max_bytes: int,
         db: sqlite3.Connection | None = None,
+        preview: bool = True,
     ) -> BlobInfo:
         suffix = Path(filename or "upload").suffix.lower().lstrip(".")
         if suffix == "jpeg":
@@ -306,11 +307,13 @@ class Storage:
 
             storage_key = f"originals/{sha[:2]}/{sha}.{canonical_ext}"
             thumb_key = f"thumbs/{sha[:2]}/{sha}.webp"
-            preview_key = f"previews/{sha[:2]}/{sha}.webp"
+            preview_key = f"previews/{sha[:2]}/{sha}.webp" if preview else ""
             derive_dir.mkdir(parents=True, exist_ok=True)
             thumb_temp = derive_dir / "thumb.webp"
-            preview_temp = derive_dir / "preview.webp"
-            self._make_derivatives(temp_path, thumb_temp, preview_temp)
+            preview_temp = derive_dir / "preview.webp" if preview else None
+            self._make_derivatives(
+                temp_path, thumb_temp, preview_temp, with_preview=preview
+            )
 
             candidates = self._candidate_backends(db, size)
             if not candidates:
@@ -358,7 +361,7 @@ class Storage:
         backend_id: int,
         temp_path: Path,
         thumb_temp: Path,
-        preview_temp: Path,
+        preview_temp: Path | None,
         sha: str,
         storage_key: str,
         thumb_key: str,
@@ -375,14 +378,16 @@ class Storage:
         if not existing:
             shutil.copy2(temp_path, final_path)
         thumb_path = self.path_for(thumb_key)
-        preview_path = self.path_for(preview_key)
-        assert thumb_path is not None and preview_path is not None
+        assert thumb_path is not None
         if not thumb_path.exists():
             thumb_path.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(thumb_temp, thumb_path)
-        if not preview_path.exists():
-            preview_path.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(preview_temp, preview_path)
+        if preview_temp is not None and preview_key:
+            preview_path = self.path_for(preview_key)
+            assert preview_path is not None
+            if not preview_path.exists():
+                preview_path.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(preview_temp, preview_path)
         return BlobInfo(
             sha256=sha,
             storage_key=storage_key,
@@ -402,7 +407,7 @@ class Storage:
         row: sqlite3.Row,
         temp_path: Path,
         thumb_temp: Path,
-        preview_temp: Path,
+        preview_temp: Path | None,
         sha: str,
         storage_key: str,
         thumb_key: str,
@@ -415,12 +420,14 @@ class Storage:
         backend_id = int(row["id"])
         backend = self._backend(row)
         uploaded: list[str] = []
+        uploads = [
+            (storage_key, temp_path, mime),
+            (thumb_key, thumb_temp, "image/webp"),
+        ]
+        if preview_temp is not None and preview_key:
+            uploads.append((preview_key, preview_temp, "image/webp"))
         try:
-            for key, path, content_type in (
-                (storage_key, temp_path, mime),
-                (thumb_key, thumb_temp, "image/webp"),
-                (preview_key, preview_temp, "image/webp"),
-            ):
+            for key, path, content_type in uploads:
                 if not backend.exists(key):
                     backend.put_file(key, path, content_type)
                     uploaded.append(key)
@@ -435,7 +442,7 @@ class Storage:
             sha256=sha,
             storage_key=self._remote_key(backend_id, storage_key),
             thumb_key=self._remote_key(backend_id, thumb_key),
-            preview_key=self._remote_key(backend_id, preview_key),
+            preview_key=self._remote_key(backend_id, preview_key) if preview_key else "",
             encrypted=False,
             size=size,
             mime=mime,
@@ -462,10 +469,16 @@ class Storage:
             raise UnsupportedImage("无法识别的图片文件") from exc
 
     def _make_derivatives(
-        self, original: Path, thumb_path: Path, preview_path: Path
+        self,
+        original: Path,
+        thumb_path: Path,
+        preview_path: Path | None,
+        *,
+        with_preview: bool = True,
     ) -> None:
         thumb_path.parent.mkdir(parents=True, exist_ok=True)
-        preview_path.parent.mkdir(parents=True, exist_ok=True)
+        if preview_path is not None:
+            preview_path.parent.mkdir(parents=True, exist_ok=True)
         with Image.open(original) as image:
             try:
                 image.seek(0)
@@ -474,10 +487,10 @@ class Storage:
             image = ImageOps.exif_transpose(image)
             if image.mode not in ("RGB", "RGBA", "L"):
                 image = image.convert("RGBA" if "A" in image.getbands() else "RGB")
-            for target, max_side, quality in (
-                (thumb_path, 640, 80),
-                (preview_path, 1800, 86),
-            ):
+            targets = [(thumb_path, 640, 80)]
+            if with_preview and preview_path is not None:
+                targets.append((preview_path, 1800, 86))
+            for target, max_side, quality in targets:
                 work = image.copy()
                 work.thumbnail((max_side, max_side), Image.Resampling.LANCZOS)
                 if work.mode == "L":

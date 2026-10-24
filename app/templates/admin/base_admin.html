@@ -6,16 +6,23 @@
   <title>{% block title %}管理后台 · {{ settings.site_name }}{% endblock %}</title>
   <meta name="robots" content="noindex,nofollow">
   <link rel="icon" href="/static/favicon.svg?v=1">
-  <link rel="stylesheet" href="/static/admin.css?v=21">
   <script>
     (function () {
+      var fallback = "{{ settings.default_theme or 'dark' }}";
       try {
-        if (window.localStorage.getItem("ostensory.theme") === "light") {
-          document.documentElement.setAttribute("data-theme", "light");
+        var saved = window.localStorage.getItem("ostensory.theme");
+        var theme = saved === "light" || saved === "dark" ? saved : "";
+        if (!theme) {
+          theme = fallback === "light" ? "light"
+            : fallback === "auto"
+              ? (window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark")
+              : "dark";
         }
+        document.documentElement.setAttribute("data-theme", theme);
       } catch (error) { /* ignore */ }
     })();
   </script>
+  <link rel="stylesheet" href="/static/admin.css?v=25">
 </head>
 <body class="admin-body">
   <aside class="admin-sidebar">
@@ -27,6 +34,8 @@
       <a href="{{ admin_url('/') }}" class="{% if active == 'dashboard' %}active{% endif %}">概览</a>
       <a href="{{ admin_url('/duplicates') }}" class="{% if active == 'duplicates' %}active{% endif %}">重复检查</a>
       <a href="{{ admin_url('/assets') }}" class="{% if active == 'assets' %}active{% endif %}">图片</a>
+      {% if settings.upload_require_review == '1' %}<a href="{{ admin_url('/review') }}" class="{% if active == 'review' %}active{% endif %}">审核队列</a>{% endif %}
+      <a href="{{ admin_url('/users') }}" class="{% if active == 'users' %}active{% endif %}">用户</a>
       <a href="{{ admin_url('/trash') }}" class="{% if active == 'trash' %}active{% endif %}">回收站</a>
       <a href="{{ admin_url('/boxes') }}" class="{% if active == 'boxes' %}active{% endif %}">匣子</a>
       <a href="{{ admin_url('/albums') }}" class="{% if active == 'albums' %}active{% endif %}">相册</a>
@@ -36,7 +45,9 @@
       {% endif %}
       <a href="{{ admin_url('/storage') }}" class="{% if active == 'storage' %}active{% endif %}">存储</a>
       <a href="{{ admin_url('/settings') }}" class="{% if active == 'settings' %}active{% endif %}">设置</a>
+      <a href="{{ admin_url('/migration') }}" class="{% if active == 'migration' %}active{% endif %}">数据迁移</a>
       <a href="{{ admin_url('/account') }}" class="{% if active == 'account' %}active{% endif %}">账户</a>
+      <a href="{{ admin_url('/about') }}" class="{% if active == 'about' %}active{% endif %}">关于{% if update_state and update_state.available %}<span class="admin-nav-badge">新</span>{% endif %}</a>
     </nav>
     <div class="admin-sidebar-foot">
       <a href="/" target="_blank" rel="noopener">查看站点 ↗</a>
@@ -66,6 +77,12 @@
 
     {% if flash %}<div class="admin-notice ok" role="status">{{ flash }}</div>{% endif %}
     {% if error %}<div class="admin-notice error" role="alert">{{ error }}</div>{% endif %}
+    {% if update_state and update_state.available and active != 'about' %}
+    <div class="admin-notice ok" role="status">发现新版本 {{ update_state.latest_version }}。<a href="{{ admin_url('/about') }}">查看更新</a></div>
+    {% endif %}
+    {% if update_state and update_state.needs_restart and active != 'about' %}
+    <div class="admin-notice error" role="status">新版本已安装，重启服务后生效。<a href="{{ admin_url('/about') }}">查看详情</a></div>
+    {% endif %}
 
     <main class="admin-main">
       {% block content %}{% endblock %}

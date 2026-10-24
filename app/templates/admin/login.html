@@ -6,16 +6,23 @@
   <title>{% if lang == 'en' %}Sign in · Ostensory{% else %}登录 · Ostensory{% endif %}</title>
   <meta name="robots" content="noindex,nofollow">
   <link rel="icon" href="/static/favicon.svg?v=1">
-  <link rel="stylesheet" href="/static/admin.css?v=21">
   <script>
     (function () {
+      var fallback = "{{ settings.default_theme or 'dark' }}";
       try {
-        if (window.localStorage.getItem("ostensory.theme") === "light") {
-          document.documentElement.setAttribute("data-theme", "light");
+        var saved = window.localStorage.getItem("ostensory.theme");
+        var theme = saved === "light" || saved === "dark" ? saved : "";
+        if (!theme) {
+          theme = fallback === "light" ? "light"
+            : fallback === "auto"
+              ? (window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark")
+              : "dark";
         }
+        document.documentElement.setAttribute("data-theme", theme);
       } catch (error) { /* ignore */ }
     })();
   </script>
+  <link rel="stylesheet" href="/static/admin.css?v=25">
 </head>
 <body class="auth-body">
   <div class="auth-tools">
@@ -30,6 +37,7 @@
     <p class="eyebrow">PRIVATE ACCESS</p>
     <h1>管理后台</h1>
     <p class="muted">请输入管理员用户名和密码。</p>
+    {% if login_notice %}<div class="admin-notice ok">{{ login_notice }}</div>{% endif %}
     {% if login_error %}<div class="admin-notice error">{{ login_error }}</div>{% endif %}
     <form method="post" action="{{ admin_url('/login') }}" class="stack-form">
       <input type="hidden" name="csrf" value="{{ csrf_token }}">

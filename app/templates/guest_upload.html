@@ -4,10 +4,10 @@
 {% block head %}<meta name="robots" content="noindex,nofollow">{% endblock %}
 {% block content %}
 <section class="page-heading guest-heading">
-  <p class="eyebrow">{{ t('guest.eyebrow') }}</p>
-  <h1>{{ t('guest.heading') }}</h1>
-  <p class="muted">{{ t('guest.subtitle') }}</p>
-  {% if settings.guest_upload_log_ip == '1' %}
+  <p class="eyebrow">{{ 'MY UPLOAD' if upload_as_user else t('guest.eyebrow') }}</p>
+  <h1>{{ '上传作品' if upload_as_user else t('guest.heading') }}</h1>
+  <p class="muted">{% if upload_as_user %}上传后会署名“{{ upload_user.display_name or upload_user.username }}”。{% if upload_require_review %}当前开启了人工审核，提交后需要管理员放行。{% endif %}{% else %}{{ t('guest.subtitle') }}{% endif %}</p>
+  {% if not upload_as_user and settings.guest_upload_log_ip == '1' %}
   <p class="notice notice-ok">{{ t('guest.ip_notice') }}</p>
   {% endif %}
 </section>
@@ -47,7 +47,7 @@
       <label>{{ t('guest.album') }}
         <select name="album_id" data-guest-album data-default-album="{{ guest_default_album_id }}">
           {% for album in guest_albums %}
-          <option value="{{ album.id }}" {% if album.id == guest_default_album_id %}selected{% endif %}>{{ '—' * album.depth }} {{ album.name }}</option>
+          <option value="{{ album.id }}" {% if album.id == guest_default_album_id %}selected{% endif %}>{{ '— ' * album.depth }}{{ album.name }}{% if album.upload_locked %}（需密码，选中后会先提示解锁）{% endif %}</option>
           {% endfor %}
         </select>
       </label>
@@ -64,6 +64,43 @@
 
       <label>{{ t('guest.description') }}<textarea name="description" rows="3" maxlength="5000" placeholder="{{ t('guest.description_placeholder') }}"></textarea></label>
 
+      <label>访问密码 <span class="muted small">可选；设置后打开详情和原图需要先输入密码</span><input type="password" name="access_password" maxlength="200" autocomplete="new-password" placeholder="留空表示不加密"></label>
+
+      {% if upload_as_user %}
+      <label>谁可见
+        <select name="visibility">
+          <option value="public">所有人可见</option>
+          <option value="private">仅自己可见</option>
+        </select>
+      </label>
+      <p class="muted small">“仅自己可见”的图片不会出现在公开列表、搜索和统计里，但作者页和账户页仍可查看。</p>
+      {% endif %}
+
+      {% if upload_require_review %}
+      <p class="notice notice-ok">当前开启了人工审核。提交后图片进入待审核，管理员放行前不会公开。</p>
+      {% endif %}
+
+      {% if upload_as_user and user_quota %}
+      <div class="guest-quota user-quota">
+        <div class="guest-quota-head">
+          <span>我的可用空间</span>
+          {% if user_quota.unlimited %}
+          <strong>不限</strong>
+          {% else %}
+          <strong>{{ user_quota.remaining_bytes|filesize }} 可用</strong>
+          {% endif %}
+        </div>
+        {% if not user_quota.unlimited %}
+        <div class="guest-meter" aria-hidden="true"><span style="width: {{ user_quota.percent }}%"></span></div>
+        <p class="muted small">已用 {{ user_quota.used_bytes|filesize }} / 配额 {{ user_quota.limit_mb }} MB</p>
+        {% if user_quota.full %}<p class="guest-warning">个人配额已满。请先删除作品或清空回收站，必要时联系管理员调整配额。</p>{% endif %}
+        {% else %}
+        <p class="muted small">已用 {{ user_quota.used_bytes|filesize }}；当前账号没有设置个人上限。</p>
+        {% endif %}
+      </div>
+      {% endif %}
+
+      {% if not upload_as_user %}
       <div class="guest-quota">
         <div class="guest-quota-head">
           <span>{{ t('guest.total_pool') }}</span>
@@ -109,6 +146,7 @@
       <p class="guest-warning guest-cycle-note">{{ t('guest.cycle_on', scope=t('guest.cycle_all') if guest_cycle_scope == 'all' else t('guest.cycle_album')) }}</p>
       {% else %}
       <p class="muted small">{{ t('guest.capacity_off') }}</p>
+      {% endif %}
       {% endif %}
 
       <div class="guest-submit-row">

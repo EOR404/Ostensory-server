@@ -9,6 +9,8 @@ User=ostensory
 Group=ostensory
 WorkingDirectory=/opt/ostensory
 EnvironmentFile=/etc/ostensory.env
+Environment=OSTENSORY_MIGRATION_STATE_DIR=/opt/ostensory/migration-backups
+Environment=TMPDIR=/opt/ostensory/migration-backups/tmp
 ExecStart=/opt/ostensory/.venv/bin/python run.py
 Restart=always
 RestartSec=3
@@ -17,7 +19,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/opt/ostensory/data
+ReadWritePaths=/opt/ostensory/data /opt/ostensory/migration-backups
 LimitNOFILE=65535
 
 [Install]

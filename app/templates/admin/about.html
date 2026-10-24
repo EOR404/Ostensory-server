@@ -1,0 +1,115 @@
+{% extends "admin/base_admin.html" %}
+{% block title %}关于 · {{ settings.site_name }}{% endblock %}
+{% block content %}
+<div class="page-title">
+  <div>
+    <p class="eyebrow">ABOUT / UPDATE</p>
+    <h1>关于 Ostensory</h1>
+    <p class="muted">查看当前版本、检查更新和设置自动更新策略。</p>
+  </div>
+  <span class="version-badge">v{{ update.current_version }}</span>
+</div>
+
+{% if update.needs_restart %}
+<div class="update-alert update-alert-warn" role="status">
+  <strong>新版本已安装，等待重启。</strong>
+  <span>已安装 {{ update.installed_version }}，当前进程仍在运行 {{ update.current_version }}。重启服务后新版本才会生效，数据和设置不会受影响。</span>
+</div>
+{% elif update.available %}
+<div class="update-alert" role="status">
+  <strong>发现新版本 {{ update.latest_version }}。</strong>
+  <span>{% if update.auto_install %}自动更新已开启，检查更新时会自动安装。{% else %}自动更新未开启，只提示新版本；你可以确认后手动更新。{% endif %}</span>
+</div>
+{% elif update.current_is_newer %}
+<div class="update-alert update-alert-muted" role="status">
+  <strong>当前运行的是开发版或更新的版本。</strong>
+  <span>最新 Release 是 {{ update.latest_version }}，当前版本 {{ update.current_version }} 更新，不需要降级。</span>
+</div>
+{% elif update.up_to_date %}
+<div class="update-alert update-alert-ok" role="status">
+  <strong>已是最新版本。</strong>
+  <span>上次检查：{{ check_time }}。</span>
+</div>
+{% elif not update.latest_version and not update.last_error %}
+<div class="update-alert update-alert-muted" role="status">
+  <strong>还没有可用的 Release。</strong>
+  <span>可以稍后再检查；这不影响当前版本正常运行。</span>
+</div>
+{% endif %}
+
+<div class="admin-split">
+  <section class="panel">
+    <div class="panel-head"><h2>版本与更新</h2><span class="muted small">{{ update.repo or '仓库配置错误' }}</span></div>
+    <dl class="version-list">
+      <div><dt>当前运行版本</dt><dd><strong>{{ update.current_version }}</strong></dd></div>
+      <div><dt>最新 Release</dt><dd>{% if update.latest_version %}{{ update.latest_version }}{% if update.latest_tag and update.latest_tag != update.latest_version %}（{{ update.latest_tag }}）{% endif %}{% else %}尚未获取{% endif %}</dd></div>
+      <div><dt>上次检查</dt><dd>{{ check_time }}</dd></div>
+      {% if update.installed_version %}<div><dt>已安装版本</dt><dd>{{ update.installed_version }}</dd></div>{% endif %}
+      {% if update.last_install_at %}<div><dt>上次安装</dt><dd>{{ install_time }}</dd></div>{% endif %}
+    </dl>
+
+    {% if update.last_error %}
+    <div class="update-error"><strong>上次操作提示：</strong>{{ update.last_error }}</div>
+    {% endif %}
+
+    {% if update.needs_restart %}
+    <div class="update-actions">
+      <p class="muted small">请重启服务（systemd、Docker 或启动命令）让新版本生效。更新已保留数据库、图片、密钥和全部设置。</p>
+      {% if update.backup_path %}<p class="muted small">更新前备份：<code>{{ update.backup_path }}</code></p>{% endif %}
+    </div>
+    {% elif update.available %}
+      {% if update.can_install %}
+      <form method="post" action="{{ admin_url('/about/install') }}" class="update-actions" data-confirm="确定更新到 {{ update.latest_version }}？会先备份当前程序和数据库，只替换程序文件，不会修改数据目录。">
+        <input type="hidden" name="csrf" value="{{ csrf_token }}">
+        <button class="button" type="submit">更新到 {{ update.latest_version }}</button>
+        <span class="muted small">直接升级到最新版，不需要逐个版本升级。</span>
+      </form>
+      {% else %}
+      <div class="update-error">当前是 Docker 部署，不能在容器内持久更新。请在宿主机拉取新版本并重建容器。</div>
+      {% endif %}
+    {% endif %}
+
+    <div class="update-actions">
+      <form method="post" action="{{ admin_url('/about/check') }}">
+        <input type="hidden" name="csrf" value="{{ csrf_token }}">
+        <button class="button ghost" type="submit">立即检查更新</button>
+      </form>
+      <span class="muted small">检查会访问 GitHub Releases；失败不会重启或改动程序。</span>
+    </div>
+
+    {% if update.latest_url %}
+    <p class="muted small"><a href="{{ update.latest_url }}" target="_blank" rel="noopener noreferrer">在 GitHub 查看这个 Release ↗</a></p>
+    {% endif %}
+  </section>
+
+  <section class="panel">
+    <div class="panel-head"><h2>自动更新设置</h2></div>
+    <form method="post" action="{{ admin_url('/about') }}" class="stack-form">
+      <input type="hidden" name="csrf" value="{{ csrf_token }}">
+      <label class="check"><input type="checkbox" name="update_auto_check" value="1" {% if update.auto_check %}checked{% endif %}> 自动检查更新</label>
+      <p class="muted small">默认开启。后台启动后会定期检查，并在发现新版本时显示提示。检查只读取版本信息，不会自动改动文件。</p>
+      <label class="check"><input type="checkbox" name="update_auto_install" value="1" {% if update.auto_install %}checked{% endif %}> 发现新版本后自动更新</label>
+      <p class="muted small">默认关闭。开启后会在检查到新版本时自动下载、校验、备份并替换程序文件；仍需要重启服务才会运行新版本。后台不会自动杀进程，避免更新请求把自己中断。开启此项会同时开启自动检查。</p>
+      <button class="button" type="submit">保存更新设置</button>
+    </form>
+    <div class="update-safety">
+      <strong>数据安全说明</strong>
+      <ul>
+        <li>更新只替换程序代码，不覆盖 <code>data/</code> 目录。</li>
+        <li>数据库、图片、主密钥、后台路径、账户和所有设置都会保留。</li>
+        <li>安装前会生成 SQLite 一致性快照和旧程序备份，校验失败会停止。</li>
+        <li>更新失败会尝试恢复旧程序；请保留备份目录，必要时按 README 手动回滚。</li>
+        <li>当前部署：{% if update.deploy_mode == 'docker' %}Docker（容器内更新不会持久保存，建议在宿主机重建镜像）{% else %}源代码 / systemd 部署{% endif %}。</li>
+      </ul>
+      {% if restore_hint %}<p class="muted small">{{ restore_hint }}</p>{% endif %}
+    </div>
+  </section>
+</div>
+
+{% if update.notes %}
+<section class="panel update-notes">
+  <div class="panel-head"><h2>更新说明</h2><span class="muted small">{{ update.latest_tag or update.latest_version }}</span></div>
+  <pre>{{ update.notes }}</pre>
+</section>
+{% endif %}
+{% endblock %}

@@ -14,6 +14,10 @@ secret.key
 .env
 .env.*
 backups/
+migration-backups/
+migration-tmp/
+*.pre-migration-*/
+.*.migration.json
 
 # Tests and development-only files
 tests/

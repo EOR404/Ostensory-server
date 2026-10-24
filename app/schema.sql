@@ -33,15 +33,30 @@ INSERT OR IGNORE INTO settings(key, value) VALUES
     ('home_layout', 'masonry'),
     ('home_waterfall_source', 'latest'),
     ('guest_upload_log_ip', '0'),
-    ('trash_retention_days', '0');
+    ('default_language', 'auto'),
+    ('default_theme', 'dark'),
+    ('registration_enabled', '0'),
+    ('preview_enabled', '1'),
+    ('trash_retention_days', '-1'),
+    ('user_quota_mode', 'fixed'),
+    ('user_quota_default_mb', '1024'),
+    ('user_quota_full_action', 'reject');
 
 CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     username TEXT NOT NULL UNIQUE,
     password_hash TEXT NOT NULL,
+    role TEXT NOT NULL DEFAULT 'user',
+    display_name TEXT NOT NULL DEFAULT '',
+    is_active INTEGER NOT NULL DEFAULT 1,
+    quota_mb INTEGER NOT NULL DEFAULT 0,
+    oauth_provider TEXT NOT NULL DEFAULT '',
+    oauth_subject TEXT NOT NULL DEFAULT '',
+    last_login_at TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
+
 
 CREATE TABLE IF NOT EXISTS sessions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -151,6 +166,13 @@ CREATE TABLE IF NOT EXISTS assets (
     source TEXT NOT NULL DEFAULT 'web',
     upload_ip TEXT NOT NULL DEFAULT '',
     client_path TEXT,
+    owner_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    author_name TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'approved',
+    visibility TEXT NOT NULL DEFAULT 'public',
+    views INTEGER NOT NULL DEFAULT 0,
+    reviewed_at TEXT,
+    review_note TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     deleted_at TEXT
@@ -161,6 +183,25 @@ CREATE INDEX IF NOT EXISTS idx_assets_created ON assets(deleted_at, id DESC);
 CREATE INDEX IF NOT EXISTS idx_assets_client_path ON assets(album_id, client_path);
 CREATE INDEX IF NOT EXISTS idx_assets_blob ON assets(blob_id);
 CREATE INDEX IF NOT EXISTS idx_assets_nsfw ON assets(nsfw);
+
+
+CREATE TABLE IF NOT EXISTS asset_likes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    asset_id INTEGER NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
+    user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    actor_key TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    UNIQUE(asset_id, actor_key)
+);
+CREATE INDEX IF NOT EXISTS idx_asset_likes_asset ON asset_likes(asset_id);
+CREATE INDEX IF NOT EXISTS idx_asset_likes_user ON asset_likes(user_id);
+
+CREATE TABLE IF NOT EXISTS asset_view_seen (
+    asset_id INTEGER NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
+    actor_key TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY(asset_id, actor_key)
+);
 CREATE INDEX IF NOT EXISTS idx_blobs_sha ON blobs(sha256);
 CREATE INDEX IF NOT EXISTS idx_albums_parent ON albums(parent_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_expiry ON sessions(expires_at);

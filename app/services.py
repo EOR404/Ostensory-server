@@ -10,6 +10,7 @@ from typing import Any, BinaryIO
 from .access import countries_json, validate_region_mode
 from .database import get_setting, utc_now
 from .metadata import lora_names, normalize_client_metadata, parse_image_metadata
+from .quotas import QuotaExceeded, ensure_user_quota
 from .storage import BlobInfo, Storage
 
 CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]")
@@ -93,6 +94,11 @@ def create_asset_from_upload(
     description: str = "",
     expected_sha256: str | None = None,
     metadata: dict[str, Any] | None = None,
+    owner_id: int | None = None,
+    author_name: str = "",
+    status: str = "approved",
+    visibility: str = "public",
+    access_password_hash: str | None = None,
 ) -> tuple[sqlite3.Row, str]:
     if album_id is not None:
         album = db.execute("SELECT id FROM albums WHERE id = ?", (album_id,)).fetchone()
@@ -100,17 +106,26 @@ def create_asset_from_upload(
             raise ValueError("相册不存在")
     allowed = allowed_extensions(db)
     max_bytes = max_upload_bytes(db)
-    info = storage.ingest(source, filename, allowed, max_bytes, db=db)
+    preview_enabled = get_setting(db, "preview_enabled", "1") == "1"
+    info = storage.ingest(
+        source,
+        filename,
+        allowed,
+        max_bytes,
+        db=db,
+        preview=preview_enabled,
+    )
     if expected_sha256 and info.sha256.lower() != expected_sha256.lower():
         if not info.existing:
             storage.remove_keys(
                 info.storage_key, info.thumb_key, info.preview_key
             )
         raise ValueError("客户端 SHA-256 与服务端计算结果不一致")
-    blob = _blob_from_info(db, info, storage)
 
-    # A client upload for the same (album, path) replaces the previous active row.
-    status = "created"
+    # A client upload for the same (album, path) replaces the previous active
+    # row. Check this before creating a blob row so a duplicate does not count
+    # against the owner's quota a second time.
+    outcome = "created"
     if client_path:
         existing = db.execute(
             "SELECT a.*, b.sha256 FROM assets a JOIN blobs b ON b.id = a.blob_id "
@@ -119,15 +134,31 @@ def create_asset_from_upload(
         ).fetchone()
         if existing:
             if existing["sha256"] == info.sha256:
+                if not info.existing:
+                    storage.remove_keys(
+                        info.storage_key, info.thumb_key, info.preview_key
+                    )
                 return existing, "duplicate"
             if overwrite:
                 db.execute(
                     "UPDATE assets SET deleted_at = ?, updated_at = ? WHERE id = ?",
                     (utc_now(), utc_now(), existing["id"]),
                 )
-                status = "updated"
+                outcome = "updated"
             else:
-                status = "created"
+                outcome = "created"
+
+    if owner_id is not None:
+        try:
+            ensure_user_quota(db, storage, int(owner_id), int(info.size or 0))
+        except QuotaExceeded:
+            if not info.existing:
+                storage.remove_keys(
+                    info.storage_key, info.thumb_key, info.preview_key
+                )
+            raise
+
+    blob = _blob_from_info(db, info, storage)
 
     metadata_path = storage.path_for(info.storage_key)
     assert metadata_path is not None
@@ -156,8 +187,9 @@ def create_asset_from_upload(
         "INSERT INTO assets(blob_id, album_id, box_id, original_name, title, description, "
         "intro_allow_html, metadata_json, "
         "positive_prompt, negative_prompt, lora_names, nsfw, region_mode, region_countries, "
-        "source, upload_ip, client_path, created_at, updated_at) "
-        "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        "source, upload_ip, client_path, owner_id, author_name, status, visibility, "
+        "access_password_hash, created_at, updated_at) "
+        "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (
             blob["id"],
             album_id,
@@ -165,7 +197,7 @@ def create_asset_from_upload(
             safe_display_name(filename),
             (title or safe_display_name(filename))[:300],
             description[:5000],
-            0 if source_name == "guest" else 1,
+            0 if source_name in {"guest", "user"} else 1,
             json.dumps(metadata, ensure_ascii=False, separators=(",", ":")),
             str(metadata.get("positive_prompt", ""))[:200000],
             str(metadata.get("negative_prompt", ""))[:200000],
@@ -176,6 +208,11 @@ def create_asset_from_upload(
             source_name[:40],
             upload_ip.strip()[:64],
             client_path[:1000] if client_path else None,
+            owner_id,
+            (author_name or ("未知用户" if source_name == "guest" else "管理员"))[:80],
+            status if status in {"approved", "pending", "rejected"} else "approved",
+            visibility if visibility in {"public", "private"} else "public",
+            access_password_hash,
             now,
             now,
         ),
@@ -188,7 +225,7 @@ def create_asset_from_upload(
     ).fetchone()
     assert asset is not None
     db.execute("UPDATE albums SET updated_at = ? WHERE id = ?", (now, album_id))
-    return asset, status
+    return asset, outcome
 
 
 def blob_ref_count(db: sqlite3.Connection, blob_id: int) -> int:
@@ -288,16 +325,29 @@ def set_box_encryption(
     return count
 
 
-def delete_asset(db: sqlite3.Connection, storage: Storage, asset_id: int, purge: bool = False) -> None:
+def delete_asset(
+    db: sqlite3.Connection, storage: Storage, asset_id: int, purge: bool = False
+) -> bool:
+    """Delete an asset and report whether it was permanently removed.
+
+    A retention value of 0 disables the recycle bin entirely.  In that mode a
+    normal delete is forced into a permanent delete so no hidden files remain
+    on disk.  -1 keeps recycle-bin items forever and a positive value uses the
+    normal timed recycle-bin path.
+    """
+
     asset = db.execute("SELECT * FROM assets WHERE id = ?", (asset_id,)).fetchone()
     if not asset:
-        return
+        return False
     if not purge:
-        db.execute(
-            "UPDATE assets SET deleted_at = ?, updated_at = ? WHERE id = ?",
-            (utc_now(), utc_now(), asset_id),
-        )
-        return
+        retention = get_setting(db, "trash_retention_days", "-1").strip()
+        if retention != "0":
+            db.execute(
+                "UPDATE assets SET deleted_at = ?, updated_at = ? WHERE id = ?",
+                (utc_now(), utc_now(), asset_id),
+            )
+            return False
+        purge = True
     blob_id = asset["blob_id"]
     db.execute("DELETE FROM assets WHERE id = ?", (asset_id,))
     # A permanently removed image must not leave a dangling cover reference.
@@ -309,6 +359,7 @@ def delete_asset(db: sqlite3.Connection, storage: Storage, asset_id: int, purge:
         if blob:
             storage.remove_blob_files(blob)
             db.execute("DELETE FROM blobs WHERE id = ?", (blob_id,))
+    return True
 
 
 def extract_workflow(db: sqlite3.Connection, storage: Storage, asset: sqlite3.Row) -> dict[str, Any] | None:

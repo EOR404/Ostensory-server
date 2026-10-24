@@ -3,15 +3,18 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import os
 import re
 import shutil
 import sqlite3
+import tempfile
 from pathlib import Path
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import JSONResponse, RedirectResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 from PIL import Image
+from starlette.background import BackgroundTask
 
 from .access import (
     album_chain,
@@ -42,6 +45,18 @@ from .guest_upload import (
     guest_album_bytes,
     set_fixed_key,
 )
+from .quotas import default_quota_mb, quota_status
+from .migration import (
+    MigrationBusy,
+    MigrationError,
+    apply_import,
+    create_export_archive,
+    data_usage_bytes,
+    max_archive_bytes,
+    max_archive_mb,
+    prepare_import,
+    staging_dir,
+)
 from .reset import reset_application_data
 from .secretbox import decrypt_config, encrypt_config
 from .security import (
@@ -71,12 +86,21 @@ from .services import (
 )
 from .storage import Storage, StorageError, StorageFull
 from .storage_backends import BackendError, build_backend
+from .users import asset_author_name, user_display_name
 from .trash import (
     expiry_for,
     purge_expired,
     reclaim,
     retention_days,
     stats as trash_stats,
+)
+from .updates import (
+    UpdateError,
+    backup_restore_hint,
+    check_for_update,
+    format_check_time,
+    install_latest,
+    update_state,
 )
 from .web import (
     CURSOR_URL_RE,
@@ -115,6 +139,13 @@ RESERVED_ADMIN_PATHS = {
     "upload",
     "stats",
     "language",
+    "login",
+    "register",
+    "logout",
+    "account",
+    "authors",
+    "auth",
+    "setup",
     "admin",
 }
 
@@ -297,8 +328,9 @@ def setup_submit(
     warning = password_warning(password)
     now = utc_now()
     cursor = db.execute(
-        "INSERT INTO users(username, password_hash, created_at, updated_at) VALUES(?,?,?,?)",
-        (username, hash_password(password), now, now),
+        "INSERT INTO users(username, password_hash, role, created_at, updated_at) "
+        "VALUES(?,?,?,?,?)",
+        (username, hash_password(password), "admin", now, now),
     )
     user_id = int(cursor.lastrowid)
     if site_name.strip():
@@ -318,11 +350,20 @@ def setup_submit(
 def login_page(request: Request, next: str = "", db: sqlite3.Connection = Depends(get_db_conn)):
     if _users_count(db) == 0:
         return redirect(admin_url(request, "/setup"))
+    notice = ""
+    if request.query_params.get("migrated") == "1":
+        notice = "数据迁移已完成，请使用迁移包内的管理员账户重新登录。"
+    elif request.query_params.get("migration_failed") == "1":
+        notice = "数据迁移失败，已恢复原数据，请重新登录后查看备份。"
     return render(
         request,
         db,
         "admin/login.html",
-        {"admin": None, "next": safe_next(next, admin_url(request, ""))},
+        {
+            "admin": None,
+            "next": safe_next(next, admin_url(request, "")),
+            "login_notice": notice,
+        },
     )
 
 
@@ -355,7 +396,11 @@ def login_submit(
         )
         response.headers["Retry-After"] = str(retry_after)
         return response
-    user = db.execute("SELECT * FROM users WHERE username = ?", (username.strip(),)).fetchone()
+    user = db.execute(
+        "SELECT * FROM users WHERE username = ? COLLATE NOCASE "
+        "AND role = 'admin' AND is_active = 1",
+        (username.strip(),),
+    ).fetchone()
     if not user or not verify_password(password, user["password_hash"]):
         delay = register_login_failure(db, ip)
         if delay:
@@ -380,6 +425,10 @@ def login_submit(
             status_code=401,
         )
     clear_login_throttle(db, ip)
+    db.execute(
+        "UPDATE users SET last_login_at = ?, updated_at = ? WHERE id = ?",
+        (utc_now(), utc_now(), user["id"]),
+    )
     token, _ = create_session(db, user["id"], request, config)
     audit(db, "login", actor=user["username"], ip=ip)
     db.commit()
@@ -605,7 +654,11 @@ def duplicates_delete(
     db.commit()
     return flash_redirect(
         admin_url(request, "/duplicates") + "?review=1",
-        f"已将 {deleted} 张选中的重复图片移入回收站。",
+        (
+            f"已永久删除 {deleted} 张选中的重复图片。"
+            if retention_days(db) == 0
+            else f"已将 {deleted} 张选中的重复图片移入回收站。"
+        ),
     )
 
 
@@ -717,7 +770,7 @@ def trash_page(
 @router.post("/trash/settings")
 def trash_settings(
     request: Request,
-    days: str = Form("0"),
+    days: str = Form("-1"),
     csrf: str = Form(""),
     db: sqlite3.Connection = Depends(get_db_conn),
     config: Config = Depends(get_config),
@@ -725,7 +778,7 @@ def trash_settings(
     admin: sqlite3.Row = Depends(require_admin),
 ):
     require_csrf(request, csrf, config)
-    value = parse_int(days, 0, 0, 36500)
+    value = parse_int(days, -1, -1, 36500)
     set_setting(db, "trash_retention_days", str(value))
     audit(
         db,
@@ -736,11 +789,12 @@ def trash_settings(
     db.commit()
     purged = purge_expired(db, storage)
     db.commit()
-    message = (
-        "回收站自动删除已关闭，图片会一直保留。"
-        if value == 0
-        else f"回收站图片会在移入 {value} 天后自动永久删除。"
-    )
+    if value == -1:
+        message = "回收站已设为永久保留；图片不会自动删除。"
+    elif value == 0:
+        message = "回收站已关闭：以后删除图片会立即永久删除，不再进入回收站。已有回收站图片不会自动清空。"
+    else:
+        message = f"回收站图片会在移入 {value} 天后自动永久删除。"
     if purged["deleted"]:
         message += f" 同时清理了 {purged['deleted']} 张已过期图片。"
     return flash_redirect(admin_url(request, "/trash"), message)
@@ -997,6 +1051,10 @@ def upload_assets(
                 nsfw=nsfw == "1",
                 region_mode=region_mode,
                 region_countries=region_countries,
+                owner_id=int(admin["id"]),
+                author_name=user_display_name(admin),
+                status="approved",
+                visibility="public",
             )
             if encrypt == "1":
                 set_asset_encryption(db, storage, asset, True)
@@ -1074,7 +1132,8 @@ def assets_bulk_delete(
         ip=getattr(request.state, "client_ip", ""),
     )
     db.commit()
-    message = f"已{'彻底' if purge == '1' else '软'}删除 {deleted} 张图片。"
+    will_purge = purge == "1" or retention_days(db) == 0
+    message = f"已{'永久' if will_purge else '软'}删除 {deleted} 张图片。"
     if skipped:
         message += f" 跳过 {skipped} 张（不存在或不在回收站）。"
     return flash_redirect(destination, message)
@@ -1278,15 +1337,18 @@ def asset_delete(
     asset = _asset(db, asset_id)
     if not asset:
         raise HTTPException(status_code=404)
-    delete_asset(db, storage, asset_id, purge=purge == "1")
+    purged = delete_asset(db, storage, asset_id, purge=purge == "1")
     audit(
         db,
-        "asset.purge" if purge == "1" else "asset.delete",
+        "asset.purge" if purged else "asset.delete",
         actor=admin["username"],
         target=str(asset_id),
     )
     db.commit()
-    return flash_redirect(admin_url(request, "/assets"), "已删除。" if purge != "1" else "已彻底删除。")
+    return flash_redirect(
+        admin_url(request, "/assets"),
+        "已永久删除。" if purged else "已移入回收站。",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -2283,10 +2345,15 @@ def settings_page(
     request: Request,
     db: sqlite3.Connection = Depends(get_db_conn),
     config: Config = Depends(get_config),
+    storage: Storage = Depends(get_storage),
     admin: sqlite3.Row = Depends(require_admin),
     geo: GeoResolver = Depends(get_geo),
 ):
     values = raw_settings(db)
+    preview_row = db.execute(
+        "SELECT COUNT(*) AS n FROM blobs WHERE preview_key != ''"
+    ).fetchone()
+    preview_stats = {"count": int(preview_row["n"] if preview_row else 0)}
     key_mode = str(values.get("guest_upload_key_mode", "off"))
     return render(
         request,
@@ -2306,9 +2373,106 @@ def settings_page(
             ),
             guest_once_code=values.get("guest_upload_once_code", ""),
             guest_once_used=values.get("guest_upload_once_used", "0") == "1",
+            preview_stats=preview_stats,
             geo_status=geo.status(),
             active="settings",
         ),
+    )
+
+
+def _clean_preview_files(
+    db: sqlite3.Connection,
+    storage: Storage,
+    actor: str,
+) -> int:
+    """Delete stored preview files and clear their database references."""
+
+    cleaned = 0
+    while True:
+        rows = db.execute(
+            "SELECT id, preview_key FROM blobs WHERE preview_key != '' LIMIT 200"
+        ).fetchall()
+        if not rows:
+            break
+        for row in rows:
+            key = str(row["preview_key"] or "")
+            if key:
+                try:
+                    storage.remove_keys(None, None, key)
+                except Exception:
+                    # A remote provider may be temporarily unavailable. The
+                    # local cache is already cleared by remove_keys; leaving
+                    # the DB reference would keep serving a broken preview, so
+                    # clear it and let a later cleanup catch the orphan.
+                    pass
+                cleaned += 1
+            db.execute("UPDATE blobs SET preview_key = '' WHERE id = ?", (row["id"],))
+        db.commit()
+    audit(
+        db,
+        "settings.previews_clean",
+        actor=actor,
+        detail=f"cleaned={cleaned}",
+    )
+    db.commit()
+    return cleaned
+
+
+@router.post("/settings/previews/clean")
+def settings_clean_previews(
+    request: Request,
+    csrf: str = Form(""),
+    db: sqlite3.Connection = Depends(get_db_conn),
+    config: Config = Depends(get_config),
+    storage: Storage = Depends(get_storage),
+    admin: sqlite3.Row = Depends(require_admin),
+):
+    require_csrf(request, csrf, config)
+    cleaned = _clean_preview_files(db, storage, admin["username"])
+    return flash_redirect(
+        admin_url(request, "/settings"),
+        f"已清理 {cleaned} 个预览图文件。原图和缩略图未受影响。",
+    )
+
+
+@router.post("/settings/defaults")
+def settings_restore_defaults(
+    request: Request,
+    csrf: str = Form(""),
+    db: sqlite3.Connection = Depends(get_db_conn),
+    config: Config = Depends(get_config),
+    admin: sqlite3.Row = Depends(require_admin),
+):
+    require_csrf(request, csrf, config)
+    from .web import DEFAULT_SETTINGS
+
+    # Restore every known site setting except credentials and the admin path.
+    # Changing the admin path would invalidate the page the operator is using;
+    # wiping OAuth/guest-key secrets would silently break login or upload.
+    # Data, accounts, storage backends, API tokens, sessions and encryption
+    # keys are never touched.
+    preserve = {
+        "admin_path",
+        "qq_client_secret",
+        "discord_client_secret",
+        "guest_upload_key_hash",
+        "guest_upload_once_hash",
+        "guest_upload_once_code",
+        "guest_upload_once_used",
+    }
+    for key, value in DEFAULT_SETTINGS.items():
+        if key in preserve:
+            continue
+        set_setting(db, key, value)
+    # These runtime markers must survive a settings reset.
+    set_setting(db, "trash_semantics_ready", "2")
+    audit(db, "settings.restore_defaults", actor=admin["username"])
+    db.commit()
+    request.app.state.default_language = DEFAULT_SETTINGS.get("default_language", "auto")
+    request.app.state.default_theme = DEFAULT_SETTINGS.get("default_theme", "dark")
+    return flash_redirect(
+        admin_url(request, "/settings"),
+        "已恢复默认设置。图片、账号、API Token、存储配置和密钥均未删除；已有用户配额也保持不变。",
     )
 
 
@@ -2330,6 +2494,26 @@ def settings_save(
     accent_color: str = Form("#d7a76c"),
     site_icon_url: str = Form(""),
     external_image_enabled: str = Form(""),
+    external_image_guest_enabled: str = Form(""),
+    likes_views_enabled: str = Form(""),
+    allow_anonymous_likes: str = Form(""),
+    default_language: str = Form("auto"),
+    default_theme: str = Form("dark"),
+    registration_enabled: str = Form(""),
+    preview_enabled: str = Form(""),
+    clean_previews: str = Form("0"),
+    user_quota_mode: str = Form("fixed"),
+    user_quota_default_mb: str = Form("1024"),
+    user_quota_full_action: str = Form("reject"),
+    auth_password_enabled: str = Form(""),
+    auth_qq_enabled: str = Form(""),
+    auth_discord_enabled: str = Form(""),
+    qq_client_id: str = Form(""),
+    qq_client_secret: str = Form(""),
+    discord_client_id: str = Form(""),
+    discord_client_secret: str = Form(""),
+    user_upload_enabled: str = Form(""),
+    upload_require_review: str = Form(""),
     cursor_style: str = Form("default"),
     cursor_custom_url: str = Form(""),
     cursor_hotspot_x: str = Form("4"),
@@ -2344,6 +2528,9 @@ def settings_save(
     stats_show_activity: str = Form(""),
     stats_show_albums: str = Form(""),
     stats_show_guest: str = Form(""),
+    stats_show_engagement: str = Form(""),
+    stats_show_like_rank: str = Form(""),
+    stats_show_view_rank: str = Form(""),
     guest_upload_enabled: str = Form(""),
     guest_upload_log_ip: str = Form(""),
     guest_upload_key_mode: str = Form("off"),
@@ -2376,6 +2563,7 @@ def settings_save(
     csrf: str = Form(""),
     db: sqlite3.Connection = Depends(get_db_conn),
     config: Config = Depends(get_config),
+    storage: Storage = Depends(get_storage),
     admin: sqlite3.Row = Depends(require_admin),
 ):
     require_csrf(request, csrf, config)
@@ -2445,8 +2633,43 @@ def settings_save(
         "site_description": site_description.strip()[:500],
         "site_icon_url": site_icon_url.strip()[:500],
         "accent_color": accent,
+        "default_language": (
+            default_language if default_language in {"auto", "zh", "en"} else "auto"
+        ),
+        "default_theme": (
+            default_theme if default_theme in {"dark", "light", "auto"} else "dark"
+        ),
+        "preview_enabled": "1" if preview_enabled == "1" else "0",
+        "user_quota_mode": (
+            user_quota_mode if user_quota_mode in {"fixed", "elastic"} else "fixed"
+        ),
+        "user_quota_default_mb": str(
+            parse_int(user_quota_default_mb, 1024, 0, 10_000_000)
+        ),
+        "user_quota_full_action": (
+            user_quota_full_action
+            if user_quota_full_action in {"reject", "clean_trash"}
+            else "reject"
+        ),
         "public_base_url": base,
         "external_image_enabled": "1" if external_image_enabled == "1" else "0",
+        "external_image_guest_enabled": (
+            "1" if external_image_guest_enabled == "1" else "0"
+        ),
+        "likes_views_enabled": "1" if likes_views_enabled == "1" else "0",
+        "allow_anonymous_likes": "1" if allow_anonymous_likes == "1" else "0",
+        "registration_enabled": "1" if registration_enabled == "1" else "0",
+        "auth_password_enabled": "1" if auth_password_enabled == "1" else "0",
+        "auth_qq_enabled": "1" if auth_qq_enabled == "1" else "0",
+        "auth_discord_enabled": "1" if auth_discord_enabled == "1" else "0",
+        "qq_client_id": qq_client_id.strip()[:200],
+        "qq_client_secret": qq_client_secret.strip()[:500]
+        or get_setting(db, "qq_client_secret", ""),
+        "discord_client_id": discord_client_id.strip()[:200],
+        "discord_client_secret": discord_client_secret.strip()[:500]
+        or get_setting(db, "discord_client_secret", ""),
+        "user_upload_enabled": "1" if user_upload_enabled == "1" else "0",
+        "upload_require_review": "1" if upload_require_review == "1" else "0",
         "cursor_style": cursor_mode,
         "cursor_custom_url": custom_cursor,
         "cursor_hotspot_x": str(parse_int(cursor_hotspot_x, 4, 0, 64)),
@@ -2475,6 +2698,9 @@ def settings_save(
         "stats_show_activity": "1" if stats_show_activity == "1" else "0",
         "stats_show_albums": "1" if stats_show_albums == "1" else "0",
         "stats_show_guest": "1" if stats_show_guest == "1" else "0",
+        "stats_show_engagement": "1" if stats_show_engagement == "1" else "0",
+        "stats_show_like_rank": "1" if stats_show_like_rank == "1" else "0",
+        "stats_show_view_rank": "1" if stats_show_view_rank == "1" else "0",
         "guest_upload_enabled": "1" if guest_upload_enabled == "1" else "0",
         "guest_upload_log_ip": "1" if guest_upload_log_ip == "1" else "0",
         "guest_upload_key_mode": key_mode,
@@ -2526,7 +2752,14 @@ def settings_save(
         ip=getattr(request.state, "client_ip", ""),
     )
     db.commit()
+    request.app.state.default_language = values["default_language"]
+    request.app.state.default_theme = values["default_theme"]
+    cleaned = 0
+    if clean_previews == "1":
+        cleaned = _clean_preview_files(db, storage, admin["username"])
     message = "设置已保存。"
+    if clean_previews == "1":
+        message += f" 已清理 {cleaned} 个预览图文件。"
     if key_warning:
         message += " " + key_warning
     if cursor_warning:
@@ -2685,6 +2918,867 @@ def settings_admin_path(
     return flash_redirect(f"/{value}/settings", f"后台路径已改为 /{value}。")
 
 
+@router.get("/users")
+def users_page(
+    request: Request,
+    db: sqlite3.Connection = Depends(get_db_conn),
+    admin: sqlite3.Row = Depends(require_admin),
+):
+    rows = db.execute(
+        "SELECT u.*, (SELECT COUNT(*) FROM assets a WHERE a.owner_id = u.id "
+        "AND a.deleted_at IS NULL) AS asset_count FROM users u ORDER BY u.id ASC"
+    ).fetchall()
+    users = []
+    for row in rows:
+        item = dict(row)
+        item["quota"] = quota_status(db, int(row["id"]))
+        users.append(item)
+    return render(
+        request,
+        db,
+        "admin/users.html",
+        _admin_ctx(admin, active="users", users=users),
+    )
+
+
+@router.post("/users")
+def user_create(
+    request: Request,
+    username: str = Form(""),
+    display_name: str = Form(""),
+    password: str = Form(""),
+    role: str = Form("user"),
+    quota_mb: str = Form(""),
+    csrf: str = Form(""),
+    db: sqlite3.Connection = Depends(get_db_conn),
+    config: Config = Depends(get_config),
+    storage: Storage = Depends(get_storage),
+    admin: sqlite3.Row = Depends(require_admin),
+):
+    require_csrf(request, csrf, config)
+    username = username.strip()
+    if not USERNAME_RE.match(username):
+        return flash_redirect(
+            admin_url(request, "/users"),
+            "用户名需为 3-64 位字母、数字或 _ . @ - 字符。",
+        )
+    if len(password) < 8:
+        return flash_redirect(admin_url(request, "/users"), "密码至少需要 8 个字符。")
+    if role not in {"user", "admin"}:
+        role = "user"
+    if quota_mb.strip():
+        quota_value = parse_int(quota_mb, 0, 0, 10_000_000)
+    else:
+        quota_value = default_quota_mb(db, storage)
+    now = utc_now()
+    try:
+        db.execute(
+            "INSERT INTO users(username, password_hash, role, display_name, is_active, "
+            "quota_mb, created_at, updated_at) VALUES(?,?,?,?,1,?,?,?)",
+            (
+                username,
+                hash_password(password),
+                role,
+                display_name.strip()[:40],
+                quota_value,
+                now,
+                now,
+            ),
+        )
+    except sqlite3.IntegrityError:
+        return flash_redirect(admin_url(request, "/users"), "这个用户名已经存在。")
+    audit(
+        db,
+        "admin.user_create",
+        actor=admin["username"],
+        target=username,
+        detail=f"quota_mb={quota_value}",
+    )
+    db.commit()
+    quota_text = "不限" if quota_value == 0 else f"{quota_value} MB"
+    return flash_redirect(
+        admin_url(request, "/users"), f"用户已创建，个人配额：{quota_text}。"
+    )
+
+
+@router.get("/users/{user_id}")
+def user_edit_page(
+    user_id: int,
+    request: Request,
+    db: sqlite3.Connection = Depends(get_db_conn),
+    admin: sqlite3.Row = Depends(require_admin),
+):
+    user = db.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+    if not user:
+        raise HTTPException(status_code=404, detail="用户不存在")
+    rows = db.execute(
+        asset_query()
+        + "WHERE a.owner_id = ? AND a.deleted_at IS NULL ORDER BY a.id DESC",
+        (user_id,),
+    ).fetchall()
+    return render(
+        request,
+        db,
+        "admin/user_edit.html",
+        _admin_ctx(
+            admin,
+            active="users",
+            edit_user=user,
+            user_quota=quota_status(db, user_id),
+            user_assets=[dict(row) for row in rows],
+            albums=_album_choices(db),
+        ),
+    )
+
+
+@router.post("/users/{user_id}")
+def user_edit_submit(
+    user_id: int,
+    request: Request,
+    username: str = Form(""),
+    display_name: str = Form(""),
+    password: str = Form(""),
+    role: str = Form("user"),
+    is_active: str = Form(""),
+    quota_mb: str = Form(""),
+    csrf: str = Form(""),
+    db: sqlite3.Connection = Depends(get_db_conn),
+    config: Config = Depends(get_config),
+    admin: sqlite3.Row = Depends(require_admin),
+):
+    require_csrf(request, csrf, config)
+    user = db.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+    if not user:
+        raise HTTPException(status_code=404, detail="用户不存在")
+    username = username.strip() or user["username"]
+    if not USERNAME_RE.match(username):
+        return flash_redirect(admin_url(request, f"/users/{user_id}"), "用户名格式不正确。")
+    role = role if role in {"user", "admin"} else user["role"]
+    active = 1 if is_active == "1" else 0
+    if user_id == int(admin["id"]) and (not active or role != "admin"):
+        return flash_redirect(
+            admin_url(request, f"/users/{user_id}"),
+            "不能停用自己或移除自己的管理员角色。",
+        )
+    if user["role"] == "admin" and (role != "admin" or not active):
+        admin_count = db.execute(
+            "SELECT COUNT(*) AS n FROM users WHERE role = 'admin' AND is_active = 1"
+        ).fetchone()["n"]
+        if int(admin_count) <= 1:
+            return flash_redirect(
+                admin_url(request, f"/users/{user_id}"),
+                "必须至少保留一个可用的管理员账号。",
+            )
+    quota_value = parse_int(
+        quota_mb if quota_mb.strip() else str(user["quota_mb"] or 0),
+        int(user["quota_mb"] or 0),
+        0,
+        10_000_000,
+    )
+    password_hash = user["password_hash"]
+    if password.strip():
+        if len(password) < 8:
+            return flash_redirect(
+                admin_url(request, f"/users/{user_id}"), "密码至少需要 8 个字符。"
+            )
+        password_hash = hash_password(password)
+    try:
+        db.execute(
+            "UPDATE users SET username = ?, display_name = ?, role = ?, is_active = ?, "
+            "quota_mb = ?, password_hash = ?, updated_at = ? WHERE id = ?",
+            (
+                username,
+                display_name.strip()[:40],
+                role,
+                active,
+                quota_value,
+                password_hash,
+                utc_now(),
+                user_id,
+            ),
+        )
+    except sqlite3.IntegrityError:
+        return flash_redirect(
+            admin_url(request, f"/users/{user_id}"), "这个用户名已经存在。"
+        )
+    live_name = user_display_name(
+        {"username": username, "role": role, "display_name": display_name.strip()[:40]}
+    )
+    db.execute(
+        "UPDATE assets SET author_name = ? WHERE owner_id = ?", (live_name, user_id)
+    )
+    if not active or password.strip():
+        db.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
+    audit(db, "admin.user_update", actor=admin["username"], target=str(user_id))
+    db.commit()
+    return flash_redirect(admin_url(request, f"/users/{user_id}"), "用户资料已更新。")
+
+
+@router.post("/users/{user_id}/delete")
+def user_delete(
+    user_id: int,
+    request: Request,
+    csrf: str = Form(""),
+    db: sqlite3.Connection = Depends(get_db_conn),
+    config: Config = Depends(get_config),
+    admin: sqlite3.Row = Depends(require_admin),
+):
+    require_csrf(request, csrf, config)
+    if user_id == int(admin["id"]):
+        return flash_redirect(admin_url(request, "/users"), "不能删除当前登录账号。")
+    user = db.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+    if not user:
+        raise HTTPException(status_code=404, detail="用户不存在")
+    if user["role"] == "admin":
+        admin_count = db.execute(
+            "SELECT COUNT(*) AS n FROM users WHERE role = 'admin'"
+        ).fetchone()["n"]
+        if int(admin_count) <= 1:
+            return flash_redirect(admin_url(request, "/users"), "必须保留至少一个管理员。")
+    db.execute(
+        "UPDATE assets SET owner_id = NULL, author_name = ? WHERE owner_id = ?",
+        ("未知用户", user_id),
+    )
+    db.execute("DELETE FROM users WHERE id = ?", (user_id,))
+    audit(db, "admin.user_delete", actor=admin["username"], target=str(user_id))
+    db.commit()
+    return flash_redirect(admin_url(request, "/users"), "用户已删除，作品保留为无主图片。")
+
+
+@router.post("/users/{user_id}/assets/{asset_id}/move")
+def user_asset_move(
+    user_id: int,
+    asset_id: int,
+    request: Request,
+    album_id: str = Form(""),
+    visibility: str = Form("public"),
+    status: str = Form("approved"),
+    csrf: str = Form(""),
+    db: sqlite3.Connection = Depends(get_db_conn),
+    config: Config = Depends(get_config),
+    admin: sqlite3.Row = Depends(require_admin),
+):
+    require_csrf(request, csrf, config)
+    asset = db.execute(
+        "SELECT * FROM assets WHERE id = ? AND owner_id = ? AND deleted_at IS NULL",
+        (asset_id, user_id),
+    ).fetchone()
+    if not asset:
+        raise HTTPException(status_code=404, detail="图片不存在")
+    album = db.execute(
+        "SELECT * FROM albums WHERE id = ?", (int(album_id),)
+    ).fetchone() if album_id.strip().isdigit() else None
+    if not album:
+        return flash_redirect(
+            admin_url(request, f"/users/{user_id}"), "目标相册不存在。"
+        )
+    status = status if status in {"approved", "pending", "rejected"} else asset["status"]
+    db.execute(
+        "UPDATE assets SET album_id = ?, box_id = ?, visibility = ?, status = ?, "
+        "updated_at = ? WHERE id = ?",
+        (
+            album["id"],
+            album["box_id"],
+            visibility if visibility in {"public", "private"} else "public",
+            status,
+            utc_now(),
+            asset_id,
+        ),
+    )
+    audit(
+        db,
+        "admin.user_asset_move",
+        actor=admin["username"],
+        target=str(asset_id),
+        detail=f"album={album['id']} status={status}",
+    )
+    db.commit()
+    return flash_redirect(admin_url(request, f"/users/{user_id}"), "作品已更新。")
+
+
+@router.post("/users/{user_id}/assets/{asset_id}/delete")
+def user_asset_delete(
+    user_id: int,
+    asset_id: int,
+    request: Request,
+    csrf: str = Form(""),
+    db: sqlite3.Connection = Depends(get_db_conn),
+    config: Config = Depends(get_config),
+    storage: Storage = Depends(get_storage),
+    admin: sqlite3.Row = Depends(require_admin),
+):
+    require_csrf(request, csrf, config)
+    asset = db.execute(
+        "SELECT * FROM assets WHERE id = ? AND owner_id = ? AND deleted_at IS NULL",
+        (asset_id, user_id),
+    ).fetchone()
+    if not asset:
+        raise HTTPException(status_code=404, detail="图片不存在")
+    purged = delete_asset(db, storage, asset_id, purge=False)
+    audit(
+        db,
+        "admin.user_asset_delete",
+        actor=admin["username"],
+        target=str(asset_id),
+        detail=f"user={user_id} purged={purged}",
+    )
+    db.commit()
+    return flash_redirect(
+        admin_url(request, f"/users/{user_id}"),
+        "作品已永久删除。" if purged else "作品已移入回收站。",
+    )
+
+
+@router.get("/review")
+def review_page(
+    request: Request,
+    db: sqlite3.Connection = Depends(get_db_conn),
+    admin: sqlite3.Row = Depends(require_admin),
+):
+    rows = db.execute(
+        asset_query()
+        + "WHERE a.status = 'pending' AND a.deleted_at IS NULL ORDER BY a.id ASC"
+    ).fetchall()
+    items = []
+    for row in rows:
+        item = dict(row)
+        item["author"] = asset_author_name(row)
+        items.append(item)
+    return render(
+        request,
+        db,
+        "admin/review.html",
+        _admin_ctx(
+            admin,
+            active="review",
+            review_items=items,
+            albums=_album_choices(db),
+        ),
+    )
+
+
+@router.post("/review/{asset_id}")
+def review_submit(
+    asset_id: int,
+    request: Request,
+    action: str = Form("approve"),
+    album_id: str = Form(""),
+    visibility: str = Form("public"),
+    nsfw: str = Form(""),
+    encrypt: str = Form(""),
+    password: str = Form(""),
+    clear_password: str = Form(""),
+    review_note: str = Form(""),
+    csrf: str = Form(""),
+    db: sqlite3.Connection = Depends(get_db_conn),
+    config: Config = Depends(get_config),
+    storage: Storage = Depends(get_storage),
+    admin: sqlite3.Row = Depends(require_admin),
+):
+    require_csrf(request, csrf, config)
+    asset = _asset(db, asset_id)
+    if not asset:
+        raise HTTPException(status_code=404, detail="图片不存在")
+    album = _asset_album(db, asset, album_id) if album_id.strip().isdigit() else None
+    if album_id.strip() and not album:
+        return flash_redirect(admin_url(request, "/review"), "目标相册不存在。")
+    now = utc_now()
+    status = "approved" if action == "approve" else "rejected"
+    password_hash = asset["access_password_hash"]
+    if clear_password == "1":
+        password_hash = None
+    elif password.strip():
+        password_hash = hash_password(password.strip()[:200])
+    db.execute(
+        "UPDATE assets SET status = ?, visibility = ?, nsfw = ?, album_id = ?, "
+        "box_id = ?, access_password_hash = ?, reviewed_at = ?, review_note = ?, "
+        "updated_at = ? WHERE id = ?",
+        (
+            status,
+            visibility if visibility in {"public", "private"} else "public",
+            1 if nsfw == "1" else 0,
+            album["id"] if album else asset["album_id"],
+            album["box_id"] if album else asset["box_id"],
+            password_hash,
+            now,
+            review_note.strip()[:1000],
+            now,
+            asset_id,
+        ),
+    )
+    if status == "approved" and encrypt == "1":
+        try:
+            set_asset_encryption(db, storage, asset, True)
+        except OSError as exc:
+            db.rollback()
+            return flash_redirect(
+                admin_url(request, "/review"), f"加密失败：{exc}"
+            )
+    audit(
+        db,
+        "asset.review",
+        actor=admin["username"],
+        target=str(asset_id),
+        detail=(
+            f"{status} album={album['id'] if album else asset['album_id']} "
+            f"encrypted={encrypt == '1'}"
+        ),
+        ip=getattr(request.state, "client_ip", ""),
+    )
+    db.commit()
+    return flash_redirect(
+        admin_url(request, "/review"),
+        "已通过审核。" if status == "approved" else "已拒绝，图片不会公开显示。",
+    )
+
+
+def _asset_album(
+    db: sqlite3.Connection, asset: sqlite3.Row, value: str
+) -> sqlite3.Row | None:
+    if not value.strip().isdigit():
+        return None
+    return db.execute("SELECT * FROM albums WHERE id = ?", (int(value),)).fetchone()
+
+
+@router.get("/about")
+def about_page(
+    request: Request,
+    db: sqlite3.Connection = Depends(get_db_conn),
+    admin: sqlite3.Row = Depends(require_admin),
+):
+    state = update_state(db)
+    return render(
+        request,
+        db,
+        "admin/about.html",
+        _admin_ctx(
+            admin,
+            active="about",
+            update=state,
+            check_time=format_check_time(state["last_check_at"]),
+            install_time=format_check_time(state["last_install_at"]),
+            restore_hint=backup_restore_hint(state["backup_path"]),
+        ),
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@router.post("/about")
+def about_save(
+    request: Request,
+    update_auto_check: str = Form("0"),
+    update_auto_install: str = Form("0"),
+    csrf: str = Form(""),
+    db: sqlite3.Connection = Depends(get_db_conn),
+    config: Config = Depends(get_config),
+    admin: sqlite3.Row = Depends(require_admin),
+):
+    require_csrf(request, csrf, config)
+    auto_check = update_auto_check == "1"
+    auto_install = update_auto_install == "1"
+    # Automatic installation without automatic checking would never run.
+    if auto_install:
+        auto_check = True
+    set_setting(db, "update_auto_check", "1" if auto_check else "0")
+    set_setting(db, "update_auto_install", "1" if auto_install else "0")
+    audit(
+        db,
+        "admin.update_settings",
+        actor=admin["username"],
+        detail=f"auto_check={auto_check} auto_install={auto_install}",
+        ip=getattr(request.state, "client_ip", ""),
+    )
+    db.commit()
+    return flash_redirect(admin_url(request, "/about"), "更新设置已保存。")
+
+
+@router.post("/about/check")
+def about_check(
+    request: Request,
+    csrf: str = Form(""),
+    db: sqlite3.Connection = Depends(get_db_conn),
+    config: Config = Depends(get_config),
+    admin: sqlite3.Row = Depends(require_admin),
+):
+    require_csrf(request, csrf, config)
+    try:
+        state = check_for_update(db, force=True)
+    except UpdateError as exc:
+        return flash_redirect(admin_url(request, "/about"), f"检查更新失败：{exc}")
+    if state["needs_restart"]:
+        return flash_redirect(
+            admin_url(request, "/about"),
+            f"新版本 {state['installed_version']} 已安装，请重启服务后生效。",
+        )
+    if not state["available"]:
+        return flash_redirect(
+            admin_url(request, "/about"),
+            "当前已经是最新版本。" if state["up_to_date"] else "没有可安装的新版本。",
+        )
+    if not state["auto_install"]:
+        return flash_redirect(
+            admin_url(request, "/about"),
+            f"发现新版本 {state['latest_version']}，可在这里手动更新。",
+        )
+    if not state["can_install"]:
+        return flash_redirect(
+            admin_url(request, "/about"),
+            "发现新版本，但当前部署方式不支持容器内自动更新，请按 README 重建镜像。",
+        )
+    try:
+        result = install_latest(config, db, restart=False)
+    except UpdateError as exc:
+        return flash_redirect(admin_url(request, "/about"), f"自动更新失败：{exc}")
+    audit(
+        db,
+        "admin.update_install",
+        actor=admin["username"],
+        target=result.new_version,
+        detail=f"auto old={result.old_version} backup={result.backup_path}",
+        ip=getattr(request.state, "client_ip", ""),
+    )
+    db.commit()
+    return flash_redirect(
+        admin_url(request, "/about"),
+        f"已自动更新到 {result.new_version}。重启服务后生效；更新前已在 {result.backup_path} 备份。",
+    )
+
+
+@router.post("/about/install")
+def about_install(
+    request: Request,
+    csrf: str = Form(""),
+    db: sqlite3.Connection = Depends(get_db_conn),
+    config: Config = Depends(get_config),
+    admin: sqlite3.Row = Depends(require_admin),
+):
+    require_csrf(request, csrf, config)
+    try:
+        result = install_latest(config, db)
+    except UpdateError as exc:
+        return flash_redirect(admin_url(request, "/about"), f"更新失败：{exc}")
+    audit(
+        db,
+        "admin.update_install",
+        actor=admin["username"],
+        target=result.new_version,
+        detail=f"manual old={result.old_version} backup={result.backup_path}",
+        ip=getattr(request.state, "client_ip", ""),
+    )
+    db.commit()
+    return flash_redirect(
+        admin_url(request, "/about"),
+        f"已更新到 {result.new_version}。重启服务后生效；更新前已在 {result.backup_path} 备份。",
+    )
+
+
+MIGRATION_CONFIRM = "MIGRATE"
+
+
+def _migration_counts(db: sqlite3.Connection) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for table in ("users", "assets", "albums", "boxes", "blobs", "api_tokens"):
+        counts[table] = int(
+            db.execute(f"SELECT COUNT(*) AS n FROM {table}").fetchone()["n"]
+        )
+    return counts
+
+
+def _migration_backend_names(db: sqlite3.Connection) -> list[str]:
+    rows = db.execute(
+        "SELECT name FROM storage_backends WHERE kind != 'local' ORDER BY priority, id"
+    ).fetchall()
+    return [str(row["name"]) for row in rows]
+
+
+def _safe_admin_path(value: str) -> str:
+    value = (value or "").strip().strip("/")
+    if not ADMIN_PATH_RE.match(value):
+        return "admin"
+    if value.lower() in RESERVED_ADMIN_PATHS and value.lower() != "admin":
+        return "admin"
+    return value
+
+
+@router.get("/migration")
+def migration_page(
+    request: Request,
+    db: sqlite3.Connection = Depends(get_db_conn),
+    config: Config = Depends(get_config),
+    admin: sqlite3.Row = Depends(require_admin),
+):
+    counts = _migration_counts(db)
+    remote_count = int(
+        db.execute(
+            "SELECT COUNT(*) AS n FROM blobs "
+            "WHERE storage_key LIKE 'remote/%' OR thumb_key LIKE 'remote/%' "
+            "OR preview_key LIKE 'remote/%'"
+        ).fetchone()["n"]
+    )
+    backup_value = get_setting(db, "migration_last_backup", "")
+    backup_path = Path(backup_value) if backup_value else None
+    export_value = get_setting(db, "migration_export_path", "")
+    export_path = Path(export_value) if export_value else None
+    export_ready = bool(export_path and export_path.is_file())
+    if export_value and not export_ready:
+        set_setting(db, "migration_export_path", "")
+        set_setting(db, "migration_export_name", "")
+        db.commit()
+    return render(
+        request,
+        db,
+        "admin/migration.html",
+        _admin_ctx(
+            admin,
+            counts=counts,
+            data_bytes=data_usage_bytes(config.data_dir),
+            remote_count=remote_count,
+            remote_backends=_migration_backend_names(db),
+            last_export=get_setting(db, "migration_last_export_at", ""),
+            last_import=get_setting(db, "migration_last_import_at", ""),
+            last_backup=backup_value,
+            backup_exists=bool(backup_path and backup_path.is_dir()),
+            max_archive_mb=max_archive_mb(),
+            export_ready=export_ready,
+            export_name=get_setting(db, "migration_export_name", "") or (
+                export_path.name if export_path else ""
+            ),
+            active="migration",
+        ),
+    )
+
+
+def _finish_export_download(config: Config, path: Path) -> None:
+    try:
+        conn = connect(config.db_path)
+        try:
+            set_setting(conn, "migration_export_path", "")
+            set_setting(conn, "migration_export_name", "")
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception:
+        pass
+    try:
+        path.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
+@router.get("/migration/download")
+def migration_download(
+    request: Request,
+    db: sqlite3.Connection = Depends(get_db_conn),
+    config: Config = Depends(get_config),
+    admin: sqlite3.Row = Depends(require_admin),
+):
+    value = get_setting(db, "migration_export_path", "")
+    path = Path(value) if value else None
+    try:
+        staging = staging_dir(config).resolve()
+        resolved = path.resolve() if path else None
+    except OSError:
+        resolved = None
+    if (
+        resolved is None
+        or not resolved.is_file()
+        or resolved.parent != staging
+        or not resolved.name.endswith(".tar.gz")
+    ):
+        set_setting(db, "migration_export_path", "")
+        set_setting(db, "migration_export_name", "")
+        db.commit()
+        return flash_redirect(
+            admin_url(request, "/migration"), "迁移包已不存在，请重新打包。"
+        )
+    audit(
+        db,
+        "migration.download",
+        actor=admin["username"],
+        target=resolved.name,
+    )
+    db.commit()
+    response = FileResponse(
+        resolved,
+        media_type="application/gzip",
+        filename=resolved.name,
+        background=BackgroundTask(_finish_export_download, config, resolved),
+    )
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@router.post("/migration/export")
+def migration_export(
+    request: Request,
+    confirm_export: str = Form(""),
+    csrf: str = Form(""),
+    db: sqlite3.Connection = Depends(get_db_conn),
+    config: Config = Depends(get_config),
+    storage: Storage = Depends(get_storage),
+    admin: sqlite3.Row = Depends(require_admin),
+):
+    require_csrf(request, csrf, config)
+    if confirm_export != "1":
+        return flash_redirect(
+            admin_url(request, "/migration"),
+            "请先勾选“我了解迁移包包含密钥和账户信息”。",
+        )
+    gate = request.app.state.migration_gate
+    token = getattr(request.state, "migration_token", None)
+    try:
+        try:
+            gate.begin(token)
+        except MigrationBusy as exc:
+            return flash_redirect(admin_url(request, "/migration"), str(exc))
+        archive: Path | None = None
+        try:
+            result = create_export_archive(config, db, storage)
+            archive = result.path
+            old_export = get_setting(db, "migration_export_path", "")
+            if old_export:
+                # Only ever remove a file that this application created in its
+                # own staging directory. An imported package could otherwise
+                # place an arbitrary path in this setting and make the next
+                # export delete it.
+                try:
+                    old_path = Path(old_export).resolve()
+                    staging = staging_dir(config).resolve()
+                    if (
+                        old_path != result.path
+                        and old_path.parent == staging
+                        and old_path.name.endswith(".tar.gz")
+                    ):
+                        old_path.unlink(missing_ok=True)
+                except OSError:
+                    pass
+            set_setting(db, "migration_last_export_at", utc_now())
+            set_setting(db, "migration_last_package", result.path.name)
+            set_setting(db, "migration_export_path", str(result.path))
+            set_setting(db, "migration_export_name", result.path.name)
+            audit(
+                db,
+                "migration.export",
+                actor=admin["username"],
+                target=result.path.name,
+                detail=f"files={result.files}; bytes={result.total_bytes}",
+            )
+            db.commit()
+            # Return the browser to a normal page instead of streaming the
+            # archive directly from the POST. A direct FileResponse from POST
+            # leaves the initiating page/download UI in a loading state in
+            # several browsers after the file has been saved. The GET route
+            # below performs the actual streaming download.
+            return RedirectResponse(
+                admin_url(request, "/migration") + "?export_ready=1",
+                status_code=303,
+            )
+        except (MigrationError, OSError, sqlite3.Error) as exc:
+            if archive is not None:
+                archive.unlink(missing_ok=True)
+            return flash_redirect(admin_url(request, "/migration"), f"导出失败：{exc}")
+        except Exception as exc:
+            if archive is not None:
+                archive.unlink(missing_ok=True)
+            return flash_redirect(admin_url(request, "/migration"), f"导出失败：{exc}")
+        finally:
+            gate.end_if_owner(token)
+    except BaseException:
+        # Covers cancellation in the small window between begin() succeeding and
+        # the inner try/finally, so the gate cannot stay locked forever.
+        gate.end_if_owner(token)
+        raise
+
+
+@router.post("/migration/import")
+def migration_import(
+    request: Request,
+    file: UploadFile = File(...),
+    confirm_import: str = Form(""),
+    confirm_phrase: str = Form(""),
+    csrf: str = Form(""),
+    db: sqlite3.Connection = Depends(get_db_conn),
+    config: Config = Depends(get_config),
+    admin: sqlite3.Row = Depends(require_admin),
+):
+    require_csrf(request, csrf, config)
+    if confirm_import != "1" or confirm_phrase.strip().upper() != MIGRATION_CONFIRM:
+        return flash_redirect(
+            admin_url(request, "/migration"),
+            f"导入前必须勾选确认，并输入 {MIGRATION_CONFIRM}。",
+        )
+    filename = (file.filename or "").strip()
+    if not filename.lower().endswith((".tar.gz", ".tgz")):
+        return flash_redirect(admin_url(request, "/migration"), "只支持 .tar.gz 或 .tgz 迁移包。")
+    gate = request.app.state.migration_gate
+    if gate.busy:
+        return flash_redirect(admin_url(request, "/migration"), "另一个迁移任务正在进行，请稍后再试。")
+    try:
+        fd, upload_name = tempfile.mkstemp(
+            prefix=".ostensory-migration-upload-",
+            suffix=".tar.gz",
+            dir=staging_dir(config),
+        )
+        os.close(fd)
+    except OSError as exc:
+        return flash_redirect(
+            admin_url(request, "/migration"),
+            f"无法创建临时上传文件：{exc}。请检查迁移临时目录权限和空间。",
+        )
+    upload_path = Path(upload_name)
+    plan = None
+    try:
+        size = 0
+        limit = max_archive_bytes()
+        with upload_path.open("wb") as out:
+            while True:
+                chunk = file.file.read(1024 * 1024)
+                if not chunk:
+                    break
+                size += len(chunk)
+                if limit and size > limit:
+                    raise MigrationError(f"迁移包超过大小限制（{limit // 1024 // 1024} MB）。")
+                out.write(chunk)
+        if not size:
+            raise MigrationError("上传的迁移包是空文件。")
+        plan = prepare_import(config, upload_path)
+        try:
+            gate.begin(getattr(request.state, "migration_token", None))
+        except MigrationBusy as exc:
+            return flash_redirect(admin_url(request, "/migration"), str(exc))
+        actor = str(admin["username"])
+        result = apply_import(request.app, config, db, plan, actor=actor)
+        admin_path = _safe_admin_path(result.admin_path)
+        response = RedirectResponse(
+            f"/{quote(admin_path)}/login?migrated=1",
+            status_code=303,
+        )
+        clear_session_cookie(response)
+        clear_unlock_cookie(response)
+        response.delete_cookie("cb_csrf", path="/")
+        return response
+    except MigrationError as exc:
+        return flash_redirect(admin_url(request, "/migration"), f"导入失败：{exc}")
+    except (OSError, sqlite3.Error) as exc:
+        return flash_redirect(admin_url(request, "/migration"), f"导入失败：{exc}")
+    except Exception as exc:
+        return flash_redirect(admin_url(request, "/migration"), f"导入失败：{exc}")
+    finally:
+        # Release only this request's gate.  If begin() lost the race to another
+        # migration, end_if_owner() is a no-op and cannot end that task.
+        gate.end_if_owner(getattr(request.state, "migration_token", None))
+        if plan is not None:
+            plan.cleanup()
+        try:
+            upload_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+        try:
+            file.file.close()
+        except Exception:
+            pass
+
+
 @router.get("/account")
 def account_page(
     request: Request,
@@ -2704,6 +3798,7 @@ def account_save(
     request: Request,
     current_password: str = Form(...),
     username: str = Form(""),
+    display_name: str = Form(""),
     new_password: str = Form(""),
     new_password2: str = Form(""),
     csrf: str = Form(""),
@@ -2722,13 +3817,28 @@ def account_save(
         password_warning_text = password_warning(new_password)
         if new_password != new_password2:
             return flash_redirect(admin_url(request, "/account"), "两次输入的密码不一致。")
+    display_name = display_name.strip()[:40]
     try:
         db.execute(
-            "UPDATE users SET username = ?, password_hash = ?, updated_at = ? WHERE id = ?",
+            "UPDATE users SET username = ?, display_name = ?, password_hash = ?, updated_at = ? WHERE id = ?",
             (
                 new_username,
+                display_name,
                 hash_password(new_password) if new_password else admin["password_hash"],
                 utc_now(),
+                admin["id"],
+            ),
+        )
+        db.execute(
+            "UPDATE assets SET author_name = ? WHERE owner_id = ?",
+            (
+                user_display_name(
+                    {
+                        "username": new_username,
+                        "role": "admin",
+                        "display_name": display_name,
+                    }
+                ),
                 admin["id"],
             ),
         )

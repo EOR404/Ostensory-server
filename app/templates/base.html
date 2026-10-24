@@ -9,15 +9,23 @@
   <link rel="icon" href="{{ settings.site_icon_url or '/static/favicon.svg?v=1' }}">
   <script>
     (function () {
+      var fallback = "{{ settings.default_theme or 'dark' }}";
       try {
         var saved = window.localStorage.getItem("ostensory.theme");
-        document.documentElement.setAttribute("data-theme", saved === "light" ? "light" : "dark");
+        var theme = saved === "light" || saved === "dark" ? saved : "";
+        if (!theme) {
+          theme = fallback === "light" ? "light"
+            : fallback === "auto"
+              ? (window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark")
+              : "dark";
+        }
+        document.documentElement.setAttribute("data-theme", theme);
       } catch (error) {
-        document.documentElement.setAttribute("data-theme", "dark");
+        document.documentElement.setAttribute("data-theme", fallback === "light" ? "light" : "dark");
       }
     })();
   </script>
-  <link rel="stylesheet" href="/static/public.css?v=25">
+  <link rel="stylesheet" href="/static/public.css?v=27">
   <style>:root { --accent: {{ settings.accent_color or '#d7a76c' }}; }</style>
   {% if settings.custom_css %}<style>{{ settings.custom_css|safe }}</style>{% endif %}
   {% if settings.custom_head_html %}{{ settings.custom_head_html|safe }}{% endif %}
@@ -37,8 +45,13 @@
       <a href="/albums" {% if current_path == '/albums' or current_path.startswith('/albums/') %}class="active"{% endif %}>{{ t('nav.albums') }}</a>
       <a href="/browse" {% if current_path == '/browse' %}class="active"{% endif %}>{{ t('nav.all_images') }}</a>
       {% if settings.about_enabled %}<a href="/about" {% if current_path == '/about' %}class="active"{% endif %}>{{ t('nav.about') }}</a>{% endif %}
-      {% if settings.guest_upload_enabled == '1' %}<a href="/upload" {% if current_path == '/upload' %}class="active"{% endif %}>{{ t('nav.upload') }}</a>{% endif %}
+      {% if is_admin or (not is_user and settings.guest_upload_enabled == '1') or (is_user and settings.user_upload_enabled == '1') %}<a href="/upload" {% if current_path == '/upload' %}class="active"{% endif %}>{{ t('nav.upload') }}</a>{% endif %}
       {% if settings.stats_enabled == '1' %}<a href="/stats" {% if current_path == '/stats' %}class="active"{% endif %}>{{ t('nav.stats') }}</a>{% endif %}
+      {% if is_user %}
+      <a href="/account" {% if current_path == '/account' %}class="active"{% endif %}>{{ user.display_name or user.username }}</a>
+      {% elif settings.auth_password_enabled == '1' or settings.auth_qq_enabled == '1' or settings.auth_discord_enabled == '1' %}
+      <a href="/login" {% if current_path == '/login' %}class="active"{% endif %}>{{ t('nav.login') }}</a>
+      {% endif %}
     </nav>
     <form class="search-form" action="/" method="get" role="search">
       <input type="search" name="q" value="{{ search|default('') }}" placeholder="{{ t('search.placeholder') }}" maxlength="200" aria-label="{{ t('search.label') }}" title="{{ t('search.title') }}">
@@ -78,7 +91,7 @@
   <button class="back-to-top" type="button" data-back-to-top aria-label="{{ t('fab.back_top') }}" title="{{ t('fab.title') }}">
     <span class="back-to-top-arrow" aria-hidden="true">↑</span>
   </button>
-  <script src="/static/public.js?v=15" defer></script>
+  <script src="/static/public.js?v=16" defer></script>
   {% block scripts %}{% endblock %}
 </body>
 </html>

@@ -15,6 +15,12 @@ from .geo import GeoResolver
 from .security import create_api_token, hash_password, password_warning
 from .services import reparse_asset
 from .storage import Storage
+from .updates import (
+    UpdateError,
+    check_for_update,
+    format_check_time,
+    install_latest,
+)
 
 ADMIN_PATH_RE = re.compile(r"^[A-Za-z0-9_-]{3,32}$")
 USERNAME_RE = re.compile(r"^[A-Za-z0-9_.@-]{3,64}$")
@@ -24,14 +30,28 @@ RESERVED_ADMIN_PATHS = {
     "static",
     "images",
     "albums",
+    "boxes",
     "download",
+    "embed",
+    "view",
     "unlock",
     "search",
     "browse",
     "favicon.ico",
     "healthz",
+    "about",
+    "branding",
+    "feed",
     "upload",
     "stats",
+    "language",
+    "login",
+    "register",
+    "logout",
+    "account",
+    "authors",
+    "auth",
+    "setup",
     "admin",
 }
 
@@ -256,6 +276,70 @@ def cmd_reparse(config: Config, args) -> int:
         db.close()
 
 
+def cmd_update(config: Config, args) -> int:
+    db = _db(config)
+    try:
+        try:
+            state = check_for_update(db, force=True)
+        except UpdateError as exc:
+            print(f"检查更新失败：{exc}", file=sys.stderr)
+            return 1
+        print(f"当前版本：{state['current_version']}")
+        print(f"最新版本：{state['latest_version'] or '未获取'}")
+        print(f"上次检查：{format_check_time(state['last_check_at'])}")
+        if not state["latest_version"]:
+            print("仓库还没有可用的 Release。")
+            return 0
+        if state["needs_restart"]:
+            print(f"新版本 {state['installed_version']} 已安装，请重启服务后生效。")
+            return 0
+        if state["current_is_newer"]:
+            print("当前版本比最新 Release 更新，不需要降级。")
+            return 0
+        if not state["available"]:
+            print("当前已经是最新版本。")
+            return 0
+        if args.check:
+            print(f"发现新版本：{state['latest_version']}")
+            if state["latest_url"]:
+                print(f"发布说明：{state['latest_url']}")
+            print("未安装。去掉 --check 即可执行更新。")
+            return 0
+        if not state["can_install"]:
+            print(
+                "当前是 Docker 部署，不能在容器内持久更新；请在宿主机拉取新镜像并重建容器。",
+                file=sys.stderr,
+            )
+            return 1
+        print(f"发现新版本：{state['latest_version']}")
+        if state["notes"]:
+            print("更新说明：")
+            print(state["notes"])
+        if not args.yes:
+            try:
+                answer = input("现在更新？会先备份程序和数据库，输入 yes 继续：").strip().lower()
+            except EOFError:
+                answer = ""
+            if answer not in {"yes", "y", "是"}:
+                print("已取消，没有改动任何文件。")
+                return 2
+        try:
+            result = install_latest(config, db, restart=args.restart)
+        except UpdateError as exc:
+            print(f"更新失败：{exc}", file=sys.stderr)
+            return 1
+        print(f"已更新：{result.old_version} -> {result.new_version}")
+        print(f"更新前备份：{result.backup_path}")
+        if result.requirements_changed:
+            print("依赖已按新版本的 requirements.txt 安装。")
+        if args.restart:
+            print("已尝试执行 OSTENSORY_UPDATE_RESTART_CMD。")
+        print("请重启服务，新版本才会生效。数据库、图片、密钥和设置都未改动。")
+        return 0
+    finally:
+        db.close()
+
+
 def cmd_geoip(config: Config, args) -> int:
     resolver = GeoResolver(config)
     try:
@@ -303,6 +387,14 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--username", default="admin")
     p = sub.add_parser("reparse", help="重新解析全部或单张图片的元数据")
     p.add_argument("--asset-id", type=int)
+    p = sub.add_parser("update", help="检查并直接更新到最新 Release")
+    p.add_argument("--check", action="store_true", help="只检查，不安装")
+    p.add_argument("--yes", action="store_true", help="不询问，直接安装")
+    p.add_argument(
+        "--restart",
+        action="store_true",
+        help="安装后执行 OSTENSORY_UPDATE_RESTART_CMD（未配置则只提示重启）",
+    )
     p = sub.add_parser("geoip", help="查询 IP 的国家")
     p.add_argument("ip")
     return parser
@@ -319,6 +411,7 @@ def main(argv: list[str] | None = None) -> int:
         "reset-admin": cmd_reset_admin,
         "create-token": cmd_create_token,
         "reparse": cmd_reparse,
+        "update": cmd_update,
         "geoip": cmd_geoip,
     }
     return handlers[args.command](config, args)

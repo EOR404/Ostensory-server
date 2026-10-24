@@ -14,7 +14,7 @@
   <div class="stat-card"><span>回收站图片</span><strong>{{ trash_stats.count }}</strong></div>
   <div class="stat-card"><span>图片总大小</span><strong>{{ trash_stats.bytes|filesize }}</strong></div>
   <div class="stat-card"><span>可释放空间</span><strong>{{ trash_stats.reclaimable_bytes|filesize }}</strong></div>
-  <div class="stat-card"><span>自动删除</span><strong>{% if retention_days %} {{ retention_days }} 天{% else %}永不{% endif %}</strong></div>
+  <div class="stat-card"><span>自动删除</span><strong>{% if retention_days == 0 %}回收站已关闭{% elif retention_days < 0 %}永久保留{% else %}{{ retention_days }} 天{% endif %}</strong></div>
 </div>
 
 <section class="panel trash-settings-panel">
@@ -23,15 +23,15 @@
       <h2>自动永久删除</h2>
       <p class="muted small">每张图片从移入回收站的时间单独计时，不是按批次或全站统一计时。</p>
     </div>
-    <span class="mini-tag">{{ '已开启' if retention_days else '默认关闭' }}</span>
+    <span class="mini-tag">{% if retention_days == 0 %}已关闭回收站{% elif retention_days < 0 %}永久保留{% else %}已开启{% endif %}</span>
   </div>
   <form method="post" action="{{ admin_url('/trash/settings') }}" class="trash-settings-form">
     <input type="hidden" name="csrf" value="{{ csrf_token }}">
     <label>保留天数
-      <input type="number" name="days" min="0" max="36500" step="1" value="{{ retention_days }}" inputmode="numeric">
+      <input type="number" name="days" min="-1" max="36500" step="1" value="{{ retention_days }}" inputmode="numeric">
     </label>
     <button class="button" type="submit">保存自动删除设置</button>
-    <p class="muted small">填 <strong>0</strong> 表示永不自动删除（默认）。例如填 30，图片进入回收站 30 天后会在后台清理任务或下一次访问时永久删除。</p>
+    <p class="muted small">填 <strong>-1</strong> 表示永久保留（默认）；填 <strong>0</strong> 表示关闭回收站，之后删除图片会立即永久删除；填 30 表示移入回收站 30 天后永久删除。修改为 0 不会自动清空已有回收站图片。</p>
   </form>
 </section>
 

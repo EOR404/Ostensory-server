@@ -1,0 +1,128 @@
+{% extends "admin/base_admin.html" %}
+{% block title %}数据迁移 · 管理后台{% endblock %}
+{% block content %}
+<div class="page-title">
+  <div>
+    <p class="eyebrow">DATA MIGRATION</p>
+    <h1>数据迁移</h1>
+    <p class="muted">把整个站点打包带走，或从另一台服务器的迁移包恢复。迁移包包含数据库、图片、账户、设置和密钥。</p>
+  </div>
+</div>
+
+<div class="admin-notice warn migration-warning" role="alert">
+  <strong>迁移包等同于站点最高权限。</strong>
+  包内包含 <code>master.key</code>、<code>secret.key</code>、账户密码哈希和全部图片。请只通过 HTTPS 传输，下载后存放在加密磁盘，迁移完成后及时删除临时文件。不要发到聊天软件或公开网盘。
+</div>
+
+<div class="stat-grid migration-stats">
+  <div class="stat-card"><span>账户</span><strong>{{ counts.users }}</strong></div>
+  <div class="stat-card"><span>图片</span><strong>{{ counts.assets }}</strong></div>
+  <div class="stat-card"><span>相册</span><strong>{{ counts.albums }}</strong></div>
+  <div class="stat-card"><span>匣子</span><strong>{{ counts.boxes }}</strong></div>
+  <div class="stat-card"><span>图片文件</span><strong>{{ counts.blobs }}</strong></div>
+  <div class="stat-card"><span>本地数据</span><strong>{{ data_bytes|filesize }}</strong></div>
+</div>
+
+<section class="panel migration-panel">
+  <div class="panel-head">
+    <h2>导出：一键打包全部数据</h2>
+    <span class="muted small">生成后回到本页下载</span>
+  </div>
+  <p class="muted">
+    会打包 SQLite 数据库快照、全部原图/缩略图/预览图、站点图标、GeoIP 数据、账户与设置、评论/点赞/浏览记录、API Token、审计日志和加密密钥。
+    临时上传目录、缓存、旧备份不会放进迁移包。
+  </p>
+  {% if remote_count %}
+  <div class="admin-notice warn">
+    检测到 <strong>{{ remote_count }}</strong> 张图片使用远程存储{% if remote_backends %}（{{ remote_backends|join('、') }}）{% endif %}。
+    导出时会逐个下载这些图片并转存到迁移包内，导入后这些图片改由本机保存；远程存储配置仍保留，供以后上传使用。
+    导出耗时和流量会明显增加。
+  </div>
+  {% endif %}
+  <p class="muted small">
+    导出期间站点会进入维护模式，避免数据库和图片在打包时被改动。维护模式只影响新请求，当前导出请求会继续执行；大站点或远程图片较多时可能持续较久。
+  </p>
+  <form method="post" action="{{ admin_url('/migration/export') }}" class="stack-form">
+    <input type="hidden" name="csrf" value="{{ csrf_token }}">
+    <label class="check">
+      <input type="checkbox" name="confirm_export" value="1" required>
+      我了解迁移包包含密钥和账户信息，必须按最高机密保管
+    </label>
+    <div class="inline-actions">
+      <button class="button" type="submit">打包并下载全部数据</button>
+      <span class="muted small">导出前建议先确认服务器磁盘剩余空间充足</span>
+    </div>
+  </form>
+  {% if export_ready %}
+  <div class="migration-backup" data-export-ready>
+    <span>迁移包已生成</span>
+    <code>{{ export_name }}</code>
+    <a class="button" href="{{ admin_url('/migration/download') }}" data-export-download data-export-auto="{{ '1' if request.query_params.get('export_ready') == '1' else '0' }}">下载迁移包</a>
+    <p class="muted small">下载完成后临时文件会自动删除；如果下载中断，可回到本页重新下载。迁移包包含密钥和账户信息，请按最高机密保管。</p>
+  </div>
+  {% endif %}
+  {% if last_export %}
+  <p class="muted small">上次导出：{{ last_export|datetime }}</p>
+  {% endif %}
+</section>
+
+<section class="panel danger-panel migration-panel">
+  <div class="panel-head">
+    <h2>导入：从迁移包恢复</h2>
+    <span class="muted small">会替换当前站点数据</span>
+  </div>
+  <p class="muted">
+    导入会先完整备份当前数据到数据目录旁边（Docker 等场景为配置的迁移状态目录），然后替换数据库、图片、密钥和设置。导入成功后旧登录会话会失效，需要使用迁移包里的管理员账户重新登录。
+  </p>
+  <ul class="plain-list">
+    <li>只接受本程序导出的 <code>.tar.gz</code> / <code>.tgz</code> 迁移包。</li>
+    <li>导入前会校验清单、文件 SHA256、数据库完整性和外键；任何一项失败都不会改动当前数据。</li>
+    <li>导入过程中站点进入维护模式。若进程中断，下次启动会自动从导入前备份恢复；若自动回滚也失败，服务会停止接受请求，需要保留备份和标记后重启。</li>
+    <li>迁移包里的后台路径、站点设置和管理员账户会一并恢复；导入前请确认你知道包内管理员账户和密码。</li>
+    <li>当前数据备份会保留在 <code>*.pre-migration-*</code> 目录（默认在数据目录旁边；配置迁移状态目录时优先放该目录），备份同样包含密钥和账户信息；确认导入无误后可手动删除。导入进行中不要改 <code>OSTENSORY_MIGRATION_STATE_DIR</code>，也不要删除恢复标记或备份。</li>
+  </ul>
+  <form method="post" action="{{ admin_url('/migration/import') }}" enctype="multipart/form-data" class="stack-form">
+    <input type="hidden" name="csrf" value="{{ csrf_token }}">
+    <label>迁移包<input type="file" name="file" accept=".tar.gz,.tgz,application/gzip" required></label>
+    <label class="check">
+      <input type="checkbox" name="confirm_import" value="1" required>
+      我确认会用迁移包替换当前数据库、图片、账户和设置
+    </label>
+    <label>确认文字（输入 <code>{{ 'MIGRATE' }}</code>）<input name="confirm_phrase" autocomplete="off" spellcheck="false" placeholder="MIGRATE" required></label>
+    <p class="muted small">{% if max_archive_mb %}单包大小上限约 {{ max_archive_mb }} MB。{% else %}应用层不设置单包大小上限，实际上限由服务器磁盘剩余空间和反向代理的请求体限制决定。{% endif %}上传、解压和校验期间站点仍可用；进入维护模式后会先做完整备份，再替换数据，数据量大时备份本身也会持续一段时间。导入过程会临时占用“上传包 + 解压包 + 导入前备份”的空间，请预留足够磁盘。</p>
+    <div class="inline-actions">
+      <button class="button danger" type="submit">校验并导入迁移包</button>
+    </div>
+  </form>
+  {% if last_import %}
+  <p class="muted small">上次导入：{{ last_import|datetime }}</p>
+  {% endif %}
+  {% if last_backup %}
+  <div class="migration-backup">
+    <span>导入前备份路径</span>
+    <code>{{ last_backup }}</code>
+    {% if not backup_exists %}<span class="status-line danger">该备份目录当前不存在</span>{% endif %}
+  </div>
+  {% endif %}
+</section>
+
+<section class="panel">
+  <div class="panel-head"><h2>迁移前检查</h2></div>
+  <ul class="plain-list">
+    <li>目标服务器必须使用相同或更新的代码版本；迁移包只恢复数据，不替换程序代码。</li>
+    <li>目标服务器磁盘至少预留“当前数据 + 迁移包解压后数据”的空间，导入还会再保留一份导入前备份。</li>
+    <li>如果目标环境通过 <code>OSTENSORY_MASTER_KEY</code> 指定主密钥，它必须与迁移包内主密钥一致，否则会拒绝导入。</li>
+    <li>远程存储里的图片会被转存到本机；迁移完成后旧远程服务即使下线也不影响已有图片。</li>
+    <li>迁移不会自动修改反向代理、域名、HTTPS 证书或 Docker 挂载，这些仍需单独配置。</li>
+  </ul>
+</section>
+<script>
+  (function () {
+    var link = document.querySelector("[data-export-download]");
+    if (!link || link.getAttribute("data-export-auto") !== "1") return;
+    window.setTimeout(function () {
+      link.click();
+    }, 250);
+  })();
+</script>
+{% endblock %}

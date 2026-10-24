@@ -32,10 +32,11 @@ def _iso(value: datetime) -> str:
 def retention_days(db: sqlite3.Connection) -> int:
     row = db.execute("SELECT value FROM settings WHERE key = ?", (RETENTION_KEY,)).fetchone()
     try:
-        days = int(row["value"] if row else 0)
+        days = int(row["value"] if row else -1)
     except (TypeError, ValueError):
-        days = 0
-    return max(0, min(36500, days))
+        days = -1
+    # -1 means keep forever; 0 means the recycle bin is disabled.
+    return max(-1, min(36500, days))
 
 
 def cutoff_for(days: int) -> str | None:

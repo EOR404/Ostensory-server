@@ -206,6 +206,11 @@ def sync_upload(
             overwrite=overwrite,
             expected_sha256=expected or None,
             metadata=client_metadata,
+            owner_id=int(user["account_id"]),
+            author_name=(
+                str(user["display_name"] or "").strip()
+                or ("管理员" if user["role"] == "admin" else str(user["username"]))
+            ),
         )
     except StorageFull as exc:
         raise HTTPException(status_code=507, detail=str(exc)) from exc

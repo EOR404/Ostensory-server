@@ -1,0 +1,81 @@
+{% extends "admin/base_admin.html" %}
+{% block title %}{{ edit_user.username }} · 用户管理{% endblock %}
+{% block content %}
+<div class="page-title">
+  <div><p class="eyebrow">USER #{{ edit_user.id }}</p><h1>{{ edit_user.username }}</h1><p class="muted">管理账号资料、状态和已上传作品。</p></div>
+  <a class="button ghost" href="{{ admin_url('/users') }}">返回用户列表</a>
+</div>
+
+<div class="admin-split">
+  <section class="panel">
+    <div class="panel-head"><h2>账号资料</h2><span class="muted small">{{ '管理员' if edit_user.role == 'admin' else '普通用户' }}</span></div>
+    <form method="post" action="{{ admin_url('/users/' ~ edit_user.id) }}" class="stack-form">
+      <input type="hidden" name="csrf" value="{{ csrf_token }}">
+      <label>用户名<input name="username" value="{{ edit_user.username }}" required maxlength="64"></label>
+      <label>显示名称 <span class="muted small">留空时按角色回退</span><input name="display_name" value="{{ edit_user.display_name or '' }}" maxlength="40"></label>
+      <label>重置密码 <span class="muted small">留空不修改</span><input type="password" name="password" minlength="8" maxlength="200" autocomplete="new-password"></label>
+      <div class="two-col">
+        <label>角色
+          <select name="role">
+            <option value="user" {% if edit_user.role != 'admin' %}selected{% endif %}>普通用户</option>
+            <option value="admin" {% if edit_user.role == 'admin' %}selected{% endif %}>管理员</option>
+          </select>
+        </label>
+        <label class="check"><input type="checkbox" name="is_active" value="1" {% if edit_user.is_active %}checked{% endif %}> 允许登录和上传</label>
+      </div>
+      <label>个人配额（MB） <span class="muted small">0 表示不限</span><input type="number" name="quota_mb" value="{{ edit_user.quota_mb }}" min="0" max="10000000"></label>
+      <p class="muted small">已用 {{ user_quota.used_bytes|filesize }}{% if not user_quota.unlimited %}，上限 {{ user_quota.limit_mb }} MB，剩余 {{ user_quota.remaining_bytes|filesize }}{% else %}，当前不限{% endif %}。回收站里的作品仍占用配额，彻底删除后才释放。</p>
+      <p class="muted small">停用或重置密码会注销该用户的所有会话。管理员至少保留一个可用账号，当前登录账号不能停用或移除管理员角色。</p>
+      <button class="button" type="submit">保存用户</button>
+    </form>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head"><h2>账号操作</h2></div>
+    <p class="muted small">删除账号不会删除作品；作品会保留为“未知用户”的无主图片，之后仍可在图片管理中处理。</p>
+    <form method="post" action="{{ admin_url('/users/' ~ edit_user.id ~ '/delete') }}" data-confirm="确定删除这个用户？作品会保留为无主图片。">
+      <input type="hidden" name="csrf" value="{{ csrf_token }}">
+      <button class="button ghost danger" type="submit">删除用户</button>
+    </form>
+  </section>
+</div>
+
+<section class="panel">
+  <div class="panel-head"><h2>已上传作品</h2><span class="muted small">{{ user_assets|length }} 张</span></div>
+  {% if user_assets %}
+  <div class="user-asset-list">
+    {% for asset in user_assets %}
+    <article class="user-asset-row">
+      <a href="{{ admin_url('/assets/' ~ asset.id) }}" class="user-asset-thumb"><img src="{{ media_url(asset.id, 'thumb', asset.sha256) }}" alt="" loading="lazy"></a>
+      <div class="user-asset-info">
+        <a href="{{ admin_url('/assets/' ~ asset.id) }}">{{ asset.title or asset.original_name }}</a>
+        <span class="muted small">#{{ asset.id }} · {{ asset.views }} 次浏览 · {{ asset.created_at }}</span>
+      </div>
+      <form method="post" action="{{ admin_url('/users/' ~ edit_user.id ~ '/assets/' ~ asset.id ~ '/move') }}" class="user-asset-move">
+        <input type="hidden" name="csrf" value="{{ csrf_token }}">
+        <select name="album_id" aria-label="相册">
+          {% for album in albums %}<option value="{{ album.id }}" {% if album.id == asset.album_id %}selected{% endif %}>{{ '— ' * album.depth }}{{ album.name }}</option>{% endfor %}
+        </select>
+        <select name="visibility" aria-label="可见性">
+          <option value="public" {% if asset.visibility != 'private' %}selected{% endif %}>公开</option>
+          <option value="private" {% if asset.visibility == 'private' %}selected{% endif %}>仅作者</option>
+        </select>
+        <select name="status" aria-label="审核状态">
+          <option value="approved" {% if asset.status == 'approved' %}selected{% endif %}>已发布</option>
+          <option value="pending" {% if asset.status == 'pending' %}selected{% endif %}>待审核</option>
+          <option value="rejected" {% if asset.status == 'rejected' %}selected{% endif %}>已拒绝</option>
+        </select>
+        <button class="button ghost small-button" type="submit">更新</button>
+      </form>
+      <form method="post" action="{{ admin_url('/users/' ~ edit_user.id ~ '/assets/' ~ asset.id ~ '/delete') }}" data-confirm="删除这张作品？关闭回收站时会立即永久删除；开启回收站时会移入回收站。">
+        <input type="hidden" name="csrf" value="{{ csrf_token }}">
+        <button class="link-button danger" type="submit">删除</button>
+      </form>
+    </article>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="empty-state"><p class="empty-title">这个用户还没有上传作品</p></div>
+  {% endif %}
+</section>
+{% endblock %}

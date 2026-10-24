@@ -23,10 +23,11 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "nav.about": "关于",
         "nav.upload": "上传",
         "nav.stats": "统计",
+        "nav.login": "登录",
         "nav.main": "主导航",
-        "search.placeholder": "搜索提示词、LoRA 或标题",
-        "search.title": "搜索提示词、LoRA 名称或图片标题",
-        "search.label": "搜索提示词、LoRA 或标题",
+        "search.placeholder": "搜索提示词、LoRA、标题或作者",
+        "search.title": "搜索提示词、LoRA 名称、图片标题或作者",
+        "search.label": "搜索提示词、LoRA、标题或作者",
         "search.button": "搜索",
         "common.view_all": "查看全部 →",
         "common.browse_all": "浏览全部 →",
@@ -368,10 +369,11 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "nav.about": "About",
         "nav.upload": "Upload",
         "nav.stats": "Stats",
+        "nav.login": "Sign in",
         "nav.main": "Main navigation",
-        "search.placeholder": "Search prompts, LoRA or titles",
-        "search.title": "Search prompts, LoRA names or image titles",
-        "search.label": "Search prompts, LoRA or titles",
+        "search.placeholder": "Search prompts, LoRA, titles or authors",
+        "search.title": "Search prompts, LoRA names, image titles or authors",
+        "search.label": "Search prompts, LoRA, titles or authors",
         "search.button": "Search",
         "common.view_all": "View all →",
         "common.browse_all": "Browse all →",
@@ -718,10 +720,13 @@ def normalize_language(value: str | None) -> str:
     return ""
 
 
-def detect_language(request: Request) -> str:
+def detect_language(request: Request, default: str | None = None) -> str:
     cookie = normalize_language(request.cookies.get(LANGUAGE_COOKIE))
     if cookie:
         return cookie
+    configured = normalize_language(default) if default else ""
+    if configured:
+        return configured
     header = request.headers.get("accept-language", "")
     candidates: list[tuple[float, int, str]] = []
     for index, part in enumerate(header.split(",")):
@@ -761,7 +766,8 @@ def translate(language: str, key: str, **values) -> str:
 
 
 def request_language(request: Request) -> str:
-    return detect_language(request)
+    configured = getattr(request.app.state, "default_language", "auto")
+    return detect_language(request, configured)
 
 
 def tr(request: Request, key: str, **values) -> str:

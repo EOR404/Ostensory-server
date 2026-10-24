@@ -9,6 +9,7 @@
 
 <form id="main-settings-form" method="post" action="{{ admin_url('/settings') }}" class="settings-form">
   <input type="hidden" name="csrf" value="{{ csrf_token }}">
+  <input type="hidden" name="clean_previews" value="0" data-preview-clean-flag>
 
   <section class="panel">
     <div class="panel-head"><h2>实验性功能</h2><span class="muted small">默认关闭，按需开启</span></div>
@@ -27,6 +28,24 @@
       <label>对外地址（可选）<input name="public_base_url" value="{{ values.public_base_url }}" placeholder="https://bed.com"></label>
       <label>主题强调色<input type="color" name="accent_color" value="{{ values.accent_color or '#d7a76c' }}"></label>
     </div>
+    <div class="two-col">
+      <label>默认语言
+        <select name="default_language">
+          <option value="auto" {% if values.default_language == 'auto' %}selected{% endif %}>自动检测浏览器语言（默认）</option>
+          <option value="zh" {% if values.default_language == 'zh' %}selected{% endif %}>中文</option>
+          <option value="en" {% if values.default_language == 'en' %}selected{% endif %}>English</option>
+        </select>
+        <small class="muted">访客手动切换语言后，浏览器 Cookie 优先于这里的默认值。</small>
+      </label>
+      <label>默认界面模式
+        <select name="default_theme">
+          <option value="dark" {% if values.default_theme == 'dark' %}selected{% endif %}>夜间（默认）</option>
+          <option value="light" {% if values.default_theme == 'light' %}selected{% endif %}>日间</option>
+          <option value="auto" {% if values.default_theme == 'auto' %}selected{% endif %}>跟随系统自动检测</option>
+        </select>
+        <small class="muted">只在浏览器没有保存过手动切换时生效。</small>
+      </label>
+    </div>
     <label>站点图标 URL（留空使用默认 ◒；也可以在下方直接上传）<input name="site_icon_url" value="{{ values.site_icon_url }}" placeholder="/branding/icon-xxxx.png 或 https://..."></label>
     <div class="three-col">
       <label>每页数量<input type="number" name="per_page" value="{{ values.per_page }}" min="6" max="200"></label>
@@ -37,7 +56,9 @@
       <label class="check"><input type="checkbox" name="blur_nsfw" value="1" {% if values.blur_nsfw == '1' %}checked{% endif %}> 访客端默认模糊 NSFW 图片</label>
       <label class="check"><input type="checkbox" name="client_download_enabled" value="1" {% if values.client_download_enabled == '1' %}checked{% endif %}> 允许客户端下载同步</label>
       <label class="check"><input type="checkbox" name="external_image_enabled" value="1" {% if values.external_image_enabled == '1' %}checked{% endif %}> 开放图片外链地址</label>
+      <label class="check"><input type="checkbox" name="external_image_guest_enabled" value="1" {% if values.external_image_guest_enabled == '1' %}checked{% endif %}> 允许未登录访客使用外链</label>
     </div>
+    <p class="muted small">“允许未登录访客使用外链”只在总外链开关开启时生效：关闭后，注册用户仍可打开原图外链，但未登录访客会被拒绝。加密图片仍需要各自密码。</p>
     <p class="muted small">开启后图片详情页和后台会显示 <code>/embed/图片ID</code> 外链，其他网站可以直接用 <code>&lt;img&gt;</code> 引用。关闭后外链地址返回 403，站内查看原图不受影响。它提供的是可控的外链入口，不等同于完整防盗链。</p>
     {% if values.experimental_features == '1' %}
     <div class="two-col">
@@ -154,7 +175,80 @@
       <label class="check"><input type="checkbox" name="stats_show_activity" value="1" {% if values.stats_show_activity == '1' %}checked{% endif %}> 近期新增与更新时间</label>
       <label class="check"><input type="checkbox" name="stats_show_albums" value="1" {% if values.stats_show_albums == '1' %}checked{% endif %}> 相册公开排行</label>
       <label class="check"><input type="checkbox" name="stats_show_guest" value="1" {% if values.stats_show_guest == '1' %}checked{% endif %}> 访客上传统计（默认不公开）</label>
+      <label class="check"><input type="checkbox" name="stats_show_engagement" value="1" {% if values.stats_show_engagement == '1' %}checked{% endif %}> 总点赞、总浏览</label>
+      <label class="check"><input type="checkbox" name="stats_show_like_rank" value="1" {% if values.stats_show_like_rank == '1' %}checked{% endif %}> 点赞最多排行</label>
+      <label class="check"><input type="checkbox" name="stats_show_view_rank" value="1" {% if values.stats_show_view_rank == '1' %}checked{% endif %}> 浏览最多排行</label>
     </div>
+    <p class="muted small">这三项分别控制统计页的总量、点赞排行和浏览排行，互不影响。排行只统计公开且审核通过的图片。</p>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head"><h2>用户、登录与审核</h2><span class="muted small">决定普通访客能否注册、登录、上传</span></div>
+    <div class="check-row">
+      <label class="check"><input type="checkbox" name="registration_enabled" value="1" {% if values.registration_enabled == '1' %}checked{% endif %}> 开放用户名/密码注册</label>
+      <label class="check"><input type="checkbox" name="auth_password_enabled" value="1" {% if values.auth_password_enabled == '1' %}checked{% endif %}> 允许用户名/密码登录</label>
+      <label class="check"><input type="checkbox" name="user_upload_enabled" value="1" {% if values.user_upload_enabled == '1' %}checked{% endif %}> 允许注册用户上传</label>
+      <label class="check"><input type="checkbox" name="upload_require_review" value="1" {% if values.upload_require_review == '1' %}checked{% endif %}> 用户上传需要人工审核</label>
+    </div>
+    <p class="muted small">注册和密码登录可以分别关闭；关闭注册后已有账号仍可登录。开启审核后，用户上传的图片先进入“待审核”，管理员放行前不会出现在公开页面。访客上传是否审核同样受此开关控制。</p>
+    <div class="check-row">
+      <label class="check"><input type="checkbox" name="auth_qq_enabled" value="1" {% if values.auth_qq_enabled == '1' %}checked{% endif %}> 启用 QQ 登录</label>
+      <label class="check"><input type="checkbox" name="auth_discord_enabled" value="1" {% if values.auth_discord_enabled == '1' %}checked{% endif %}> 启用 Discord 登录</label>
+    </div>
+    <div class="two-col">
+      <label>QQ Client ID<input name="qq_client_id" value="{{ values.qq_client_id }}" maxlength="200" autocomplete="off"></label>
+      <label>QQ Client Secret（留空保持原值）<input type="password" name="qq_client_secret" maxlength="500" autocomplete="new-password" placeholder="{% if values.qq_client_secret %}已设置，留空不修改{% endif %}"></label>
+    </div>
+    <div class="two-col">
+      <label>Discord Client ID<input name="discord_client_id" value="{{ values.discord_client_id }}" maxlength="200" autocomplete="off"></label>
+      <label>Discord Client Secret（留空保持原值）<input type="password" name="discord_client_secret" maxlength="500" autocomplete="new-password" placeholder="{% if values.discord_client_secret %}已设置，留空不修改{% endif %}"></label>
+    </div>
+    <p class="muted small">OAuth 回调地址分别填写为 <code>/auth/qq/callback</code> 和 <code>/auth/discord/callback</code> 的完整对外 URL。QQ 互联需要在开放平台申请网站应用；Discord 在 Developer Portal 创建应用。没有配置密钥时，对应按钮不会显示。</p>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head"><h2>用户个人配额</h2><span class="muted small">按账号限制已上传数据；0 表示不限</span></div>
+    <div class="two-col">
+      <label>新用户分配方式
+        <select name="user_quota_mode">
+          <option value="fixed" {% if values.user_quota_mode == 'fixed' %}selected{% endif %}>固定默认值</option>
+          <option value="elastic" {% if values.user_quota_mode == 'elastic' %}selected{% endif %}>按当前可用总容量 ÷ 活跃用户数弹性分配</option>
+        </select>
+      </label>
+      <label>固定默认配额（MB）<input type="number" name="user_quota_default_mb" value="{{ values.user_quota_default_mb }}" min="0" max="10000000"><small class="muted">仅固定模式使用；0 表示不限。</small></label>
+    </div>
+    <label>个人空间不足时
+      <select name="user_quota_full_action">
+        <option value="reject" {% if values.user_quota_full_action == 'reject' %}selected{% endif %}>拒绝本次上传并提示（推荐，最安全）</option>
+        <option value="clean_trash" {% if values.user_quota_full_action == 'clean_trash' %}selected{% endif %}>自动永久删除该用户回收站里最旧的作品后重试</option>
+      </select>
+    </label>
+    <p class="muted small">配额按该账号名下的图片原始大小累计，回收站里的图片仍占用磁盘，也仍计入配额；彻底删除后才释放。自动清理只会动这个账号自己的回收站，不会删除别人或仍在前台展示的作品。管理员账号若设置了配额，也按同一规则执行；可在用户编辑页单独修改。</p>
+    <p class="muted small">弹性分配是创建新账号时的快照：当前可用存储容量 ÷ 当前活跃账号数。之后不会自动改写已有账号的配额，避免悄悄改变用户可用空间。已有账号升级后保持“不限”，请按需在用户编辑页设置。</p>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head"><h2>图片预览</h2><span class="muted small">低分辨率预览图</span></div>
+    <label class="check"><input type="checkbox" name="preview_enabled" value="1" {% if values.preview_enabled == '1' %}checked{% endif %} data-preview-toggle> 生成 1800px 低分辨率预览图（默认开启）</label>
+    <p class="muted small">关闭后，新上传不再生成预览图，详情页直接加载原图，会明显增加流量和加载时间。已有预览文件不会自动删除，但会立即停止使用并回退到原图；关闭时页面会询问是否清理。缩略图仍会生成，用于列表页。</p>
+    {% if preview_stats.count %}
+    <form method="post" action="{{ admin_url('/settings/previews/clean') }}" class="inline-form" data-confirm="确定永久删除全部 {{ preview_stats.count }} 个预览图文件？删除后无法恢复，之后可重新上传图片或再次开启预览生成。">
+      <input type="hidden" name="csrf" value="{{ csrf_token }}">
+      <button class="button ghost danger-text" type="submit">立即清理现有预览图（{{ preview_stats.count }} 个）</button>
+    </form>
+    <p class="muted small">清理只删除预览图，不动原图和缩略图；数据库中的预览路径会清空。清理期间仍可访问站点。</p>
+    {% else %}
+    <p class="muted small">当前没有可清理的预览图文件。</p>
+    {% endif %}
+  </section>
+
+  <section class="panel">
+    <div class="panel-head"><h2>点赞与浏览</h2><span class="muted small">详情页的互动数据</span></div>
+    <div class="check-row">
+      <label class="check"><input type="checkbox" name="likes_views_enabled" value="1" {% if values.likes_views_enabled == '1' %}checked{% endif %}> 显示点赞和浏览量</label>
+      <label class="check"><input type="checkbox" name="allow_anonymous_likes" value="1" {% if values.allow_anonymous_likes == '1' %}checked{% endif %}> 允许未登录访客点赞</label>
+    </div>
+    <p class="muted small">浏览按浏览器/账号去重，同一张图片重复刷新不会无限增加。点赞每人每图只能一次；匿名点赞使用签名访客 Cookie，清除 Cookie 后会被视为新访客。关闭总开关后，详情页不再记录或显示这两项数据。</p>
   </section>
 
   <section class="panel">
@@ -354,6 +448,15 @@
 {% endif %}
 
 <section class="panel">
+  <div class="panel-head"><h2>恢复默认设置</h2><span class="muted small">只重置站点设置</span></div>
+  <p class="muted">把语言、主题、注册、上传、回收站、预览、配额策略等站点设置恢复为默认值。不会删除图片、相册、账号、API Token、存储配置或加密密钥，也不会改写已有账号的个人配额。后台路径会保留，避免当前入口失效。</p>
+  <form method="post" action="{{ admin_url('/settings/defaults') }}" class="inline-form" data-confirm="确定恢复默认设置？这不会删除图片和账号，但会重置注册、上传、回收站、预览和配额策略等设置。">
+    <input type="hidden" name="csrf" value="{{ csrf_token }}">
+    <button class="button danger" type="submit">一键恢复默认设置</button>
+  </form>
+</section>
+
+<section class="panel">
   <div class="panel-head"><h2>安全提示</h2></div>
   <ul class="plain-list">
     <li>生产环境必须使用 HTTPS，避免 API Token 和后台密码在明文 HTTP 中泄露。</li>
@@ -361,4 +464,28 @@
     <li>反向代理需要传递 <code>X-Forwarded-For</code> 和 <code>X-Forwarded-Proto</code>，并只信任你自己的代理。</li>
   </ul>
 </section>
+<script>
+  (function () {
+    var toggle = document.querySelector("[data-preview-toggle]");
+    var flag = document.querySelector("[data-preview-clean-flag]");
+    if (!toggle || !flag) return;
+    toggle.addEventListener("change", function () {
+      if (toggle.checked) {
+        flag.value = "0";
+        return;
+      }
+      var count = {{ preview_stats.count|int }};
+      if (!count) {
+        flag.value = "0";
+        return;
+      }
+      var clear = window.confirm(
+        "关闭预览后，新上传不会再生成本地预览图；详情页会直接加载原图，流量和加载时间都会增加。\n\n" +
+        "检测到已有 " + count + " 个预览图文件。是否同时永久清理它们？清理不影响原图和缩略图，但无法恢复。\n\n" +
+        "点“确定”清理，点“取消”只关闭预览、保留旧文件。"
+      );
+      flag.value = clear ? "1" : "0";
+    });
+  })();
+</script>
 {% endblock %}

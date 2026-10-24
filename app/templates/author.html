@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block body_class %} page-author{% endblock %}
+{% block title %}{{ author_name }} · {{ settings.site_name }}{% endblock %}
+{% block content %}
+<section class="page-heading author-heading">
+  <div>
+    <p class="eyebrow">AUTHOR</p>
+    <h1>{{ author_name }}</h1>
+    <p class="muted">{{ author_assets|length }} 张作品{% if is_owner %} · <a href="/account">管理我的作品</a>{% endif %}</p>
+  </div>
+</section>
+{% if author_assets %}
+<div class="asset-grid">
+  {% for asset in author_assets %}{% include "partials/asset_card.html" %}{% endfor %}
+</div>
+{% else %}
+<div class="empty-state"><p class="empty-title">还没有公开作品</p>{% if is_owner %}<p>你上传并审核通过的作品会显示在这里。</p>{% endif %}</div>
+{% endif %}
+{% endblock %}

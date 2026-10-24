@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import sqlite3
 from contextlib import asynccontextmanager, suppress
 from pathlib import Path
@@ -19,11 +20,19 @@ from .deps import RedirectToLogin
 from .duplicates import asset_location
 from .geo import GeoResolver
 from .i18n import request_language, translate
+from .migration import (
+    MigrationGate,
+    MigrationMaintenanceMiddleware,
+    cleanup_stale_migration_temp,
+)
 from .routes_admin import router as admin_router
 from .routes_api import router as api_router
+from .routes_auth import router as auth_router
 from .routes_public import router as public_router
 from .storage import Storage
 from .trash import purge_expired
+from .updates import run_auto_update
+from .users import asset_author_name
 from .web import (
     asset_url,
     download_url,
@@ -57,6 +66,13 @@ ADMIN_RESERVED = {
     "upload",
     "stats",
     "language",
+    "login",
+    "register",
+    "logout",
+    "account",
+    "authors",
+    "auth",
+    "setup",
 }
 
 
@@ -127,12 +143,45 @@ def _admin_path(db_path: Path) -> str:
 
 
 def create_app(config: Config | None = None) -> FastAPI:
+    # Large multipart uploads are spooled to TMPDIR.  A fresh persistent
+    # volume may not contain the subdirectory yet; create it when possible.
+    temp_root = os.environ.get("TMPDIR", "").strip()
+    if temp_root:
+        try:
+            Path(temp_root).mkdir(parents=True, exist_ok=True)
+        except OSError:
+            pass
     config = config or Config.from_env()
     init_db(config)
     admin_path = _admin_path(config.db_path)
+    ui_conn = connect(config.db_path)
+    try:
+        language_row = ui_conn.execute(
+            "SELECT value FROM settings WHERE key = 'default_language'"
+        ).fetchone()
+        language_value = str(language_row["value"]) if language_row else "auto"
+        theme_row = ui_conn.execute(
+            "SELECT value FROM settings WHERE key = 'default_theme'"
+        ).fetchone()
+        theme_value = str(theme_row["value"]) if theme_row else "dark"
+    finally:
+        ui_conn.close()
+    if language_value not in {"auto", "zh", "en"}:
+        language_value = "auto"
+    if theme_value not in {"dark", "light", "auto"}:
+        theme_value = "dark"
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        try:
+            # At startup no request can own staging data.  Remove even recent
+            # leftovers immediately because export/import staging can contain
+            # the site's master key and full database snapshot.
+            cleanup_stale_migration_temp(config, max_age=0)
+        except Exception:
+            # Cleanup is best-effort; a permission problem here must not stop
+            # the site from serving.
+            pass
         def sweep_trash() -> None:
             db = connect(config.db_path)
             try:
@@ -144,21 +193,52 @@ def create_app(config: Config | None = None) -> FastAPI:
         async def trash_janitor() -> None:
             while True:
                 await asyncio.sleep(3600)
+                token = app.state.migration_gate.enter()
+                if token is None:
+                    continue
                 try:
                     await asyncio.to_thread(sweep_trash)
                 except Exception:
                     # A temporary database/remote-storage failure must not kill
                     # the hourly cleanup loop.
                     continue
+                finally:
+                    app.state.migration_gate.leave(token)
+
+        async def update_watcher() -> None:
+            # Check shortly after startup, then periodically.  Network and
+            # archive work is moved to a worker thread so request handling is
+            # never blocked.  Updates are only installed when the admin has
+            # explicitly enabled that option.
+            await asyncio.sleep(12)
+            while True:
+                token = app.state.migration_gate.enter()
+                if token is not None:
+                    try:
+                        await asyncio.to_thread(run_auto_update, config)
+                    except Exception:
+                        # A release check must never take down the web service.
+                        pass
+                    finally:
+                        app.state.migration_gate.leave(token)
+                await asyncio.sleep(900)
 
         await asyncio.to_thread(sweep_trash)
         janitor = asyncio.create_task(trash_janitor())
+        watcher = (
+            None if config.testing else asyncio.create_task(update_watcher())
+        )
         try:
             yield
         finally:
             janitor.cancel()
+            if watcher is not None:
+                watcher.cancel()
             with suppress(asyncio.CancelledError):
                 await janitor
+            if watcher is not None:
+                with suppress(asyncio.CancelledError):
+                    await watcher
             app.state.geo.close()
 
     app = FastAPI(
@@ -172,6 +252,11 @@ def create_app(config: Config | None = None) -> FastAPI:
     app.state.storage = Storage(config)
     app.state.geo = GeoResolver(config)
     app.state.admin_path = admin_path
+    app.state.default_language = language_value
+    app.state.default_theme = theme_value
+    app.state.migration_gate = MigrationGate()
+    app.state.migration_fatal = False
+    app.state.migration_rolling_back = False
     config.static_dir.mkdir(parents=True, exist_ok=True)
 
     templates = Jinja2Templates(directory=str(config.templates_dir))
@@ -188,13 +273,18 @@ def create_app(config: Config | None = None) -> FastAPI:
         intro_style=intro_style,
         format_size=format_size,
         format_datetime=format_datetime,
+        asset_author_name=asset_author_name,
     )
     app.state.templates = templates
 
     app.add_middleware(AdminRewriteMiddleware)
     app.add_middleware(SecurityHeadersMiddleware)
+    # Added last so it wraps the other middleware and rejects new traffic as
+    # soon as an import/export enters maintenance mode.
+    app.add_middleware(MigrationMaintenanceMiddleware)
     app.mount("/static", StaticFiles(directory=str(config.static_dir)), name="static")
     app.include_router(public_router)
+    app.include_router(auth_router)
     app.include_router(api_router)
     app.include_router(admin_router, prefix="/admin")
 

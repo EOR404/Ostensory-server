@@ -12,6 +12,7 @@ from starlette.responses import RedirectResponse, Response
 
 from .config import Config
 from .database import all_settings
+from .updates import UPDATE_DEFAULTS, update_state
 from .i18n import (
     LANGUAGE_COOKIE_MAX_AGE,
     js_strings,
@@ -22,6 +23,7 @@ from .security import (
     cookie_secure,
     csrf_from_request,
     current_admin,
+    current_user,
     signed_download_url,
     signed_view_url,
     verify_csrf_token,
@@ -32,6 +34,8 @@ TEMPLATE_GLOBALS: dict[str, Any] = {}
 DEFAULT_SETTINGS: dict[str, str] = {
     "site_name": "Ostensory",
     "site_subtitle": "ComfyUI 作品与生成参数归档",
+    "default_language": "auto",
+    "default_theme": "dark",
     "site_description": "私人 ComfyUI 图片与生成参数归档",
     "site_icon_url": "",
     "accent_color": "#d7a76c",
@@ -64,6 +68,27 @@ DEFAULT_SETTINGS: dict[str, str] = {
     "stats_show_activity": "1",
     "stats_show_albums": "1",
     "stats_show_guest": "0",
+    "stats_show_engagement": "1",
+    "stats_show_like_rank": "1",
+    "stats_show_view_rank": "1",
+    "likes_views_enabled": "1",
+    "allow_anonymous_likes": "0",
+    "registration_enabled": "0",
+    "auth_password_enabled": "1",
+    "auth_qq_enabled": "0",
+    "auth_discord_enabled": "0",
+    "qq_client_id": "",
+    "qq_client_secret": "",
+    "discord_client_id": "",
+    "discord_client_secret": "",
+    "user_upload_enabled": "0",
+    "upload_require_review": "0",
+    "preview_enabled": "1",
+    "user_quota_mode": "fixed",
+    "user_quota_default_mb": "1024",
+    "user_quota_full_action": "reject",
+    "trash_retention_days": "-1",
+    "external_image_guest_enabled": "1",
     "guest_upload_enabled": "0",
     "guest_upload_log_ip": "0",
     "guest_upload_key_mode": "off",
@@ -96,6 +121,7 @@ DEFAULT_SETTINGS: dict[str, str] = {
     "about_avatar": "",
     "about_bio": "",
     "about_html": "",
+    **UPDATE_DEFAULTS,
 }
 
 
@@ -188,6 +214,7 @@ def render(
     settings = site_settings(db)
     language = request_language(request)
     admin = context.get("admin") if context and "admin" in context else current_admin(db, request)
+    user = current_user(db, request)
     csrf = csrf_from_request(request, config)
     ctx = dict(context or {})
     ctx.update(
@@ -196,7 +223,9 @@ def render(
             "settings": settings,
             "site": settings,
             "admin": admin,
+            "user": user,
             "is_admin": bool(admin),
+            "is_user": bool(user),
             "admin_prefix": admin_prefix(request),
             "admin_url": lambda suffix="": admin_url(request, suffix),
             "base_url": public_base(request, db),
@@ -214,6 +243,7 @@ def render(
             "js_i18n": js_strings(language),
             "view_url": lambda asset_id: signed_view_url(asset_id, config),
             "download_url": lambda asset_id: signed_download_url(asset_id, config),
+            "update_state": update_state(db, settings),
         }
     )
     templates = request.app.state.templates

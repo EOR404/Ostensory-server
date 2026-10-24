@@ -9,7 +9,7 @@ from .access import parse_countries
 from .config import Config
 from .database import connect
 from .geo import GeoResolver
-from .security import authenticate_api_token, current_admin
+from .security import authenticate_api_token, current_admin, current_user
 from .storage import Storage
 from .web import admin_url
 
@@ -35,12 +35,24 @@ def get_db_conn(request: Request) -> Iterator[sqlite3.Connection]:
     conn = connect(request.app.state.config.db_path)
     try:
         yield conn
-        conn.commit()
     except Exception:
-        conn.rollback()
+        try:
+            conn.rollback()
+        except sqlite3.ProgrammingError:
+            pass
         raise
+    else:
+        try:
+            conn.commit()
+        except sqlite3.ProgrammingError:
+            # A migration import closes the old connection deliberately before
+            # swapping the data directory; the route has already finished.
+            pass
     finally:
-        conn.close()
+        try:
+            conn.close()
+        except sqlite3.ProgrammingError:
+            pass
 
 
 def optional_admin(
@@ -58,6 +70,26 @@ def require_admin(
     if not admin:
         raise RedirectToLogin(admin_url(request, "/login"))
     return admin
+
+
+def optional_user(
+    request: Request,
+    db: sqlite3.Connection = Depends(get_db_conn),
+) -> sqlite3.Row | None:
+    return current_user(db, request)
+
+
+def require_user(
+    request: Request,
+    db: sqlite3.Connection = Depends(get_db_conn),
+) -> sqlite3.Row:
+    from urllib.parse import quote
+
+    user = current_user(db, request)
+    if not user:
+        next_path = request.url.path + (f"?{request.url.query}" if request.url.query else "")
+        raise RedirectToLogin(f"/login?next={quote(next_path, safe='')}")
+    return user
 
 
 def require_api_user(

@@ -14,7 +14,7 @@
 <div class="admin-grid-2 asset-edit-grid">
   <section class="panel">
     <div class="panel-head"><h2>预览</h2><span class="mini-tag">{{ asset.mime }}</span></div>
-    <img class="edit-preview" src="{{ media_url(asset.id, 'preview', asset.sha256) }}" alt="">
+    <img class="edit-preview" src="{{ media_url(asset.id, 'preview', asset.sha256 if settings.preview_enabled == '1' else 'o' ~ asset.sha256) }}" alt="">
     {% if settings.external_image_enabled == '1' %}
     <div class="external-link-box admin-external">
       <span class="external-link-label">外链图片地址</span>

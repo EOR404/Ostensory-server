@@ -541,6 +541,54 @@
     }, true);
   }
 
+  function initLikeButtons() {
+    var forms = document.querySelectorAll("[data-like-form]");
+    Array.prototype.forEach.call(forms, function (form) {
+      if (!window.fetch || !window.FormData) return;
+      form.addEventListener("submit", function (event) {
+        event.preventDefault();
+        var button = form.querySelector("[data-like-button]");
+        var desiredInput = form.querySelector("[data-like-desired]");
+        if (!button || button.disabled) return;
+        button.disabled = true;
+        form.classList.add("is-pending");
+        var payload = new FormData(form);
+        fetch(form.action, {
+          method: "POST",
+          body: payload,
+          credentials: "same-origin",
+          headers: {
+            "X-Requested-With": "fetch",
+            "Accept": "application/json"
+          }
+        }).then(function (response) {
+          return response.json().then(function (body) {
+            return { response: response, body: body };
+          });
+        }).then(function (result) {
+          if (!result.response.ok || !result.body.ok) {
+            throw new Error(result.body.error || "点赞失败，请稍后再试。");
+          }
+          var liked = Boolean(result.body.liked);
+          form.setAttribute("data-liked", liked ? "1" : "0");
+          if (desiredInput) desiredInput.value = liked ? "0" : "1";
+          button.classList.toggle("is-liked", liked);
+          button.setAttribute("aria-pressed", liked ? "true" : "false");
+          var label = button.querySelector("[data-like-label]");
+          var count = button.querySelector("[data-like-count]");
+          if (label) label.textContent = liked ? "♥ 已点赞" : "♡ 点赞";
+          if (count) count.textContent = String(result.body.count);
+        }).catch(function (error) {
+          window.alert(error && error.message ? error.message : "点赞失败，请稍后再试。");
+        }).finally(function () {
+          button.disabled = false;
+          form.classList.remove("is-pending");
+        });
+      });
+    });
+  }
+
+  initLikeButtons();
   initFormScrollRestore();
   initCarousel();
   initMasonryLayouts();

@@ -1,0 +1,65 @@
+name: Release server
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Verify version matches tag
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          PY_VERSION="$(python -c 'import app; print(app.__version__)')"
+          PROJECT_VERSION="$(python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
+          echo "tag=${GITHUB_REF_NAME} app=${PY_VERSION} pyproject=${PROJECT_VERSION}"
+          test "$VERSION" = "$PY_VERSION"
+          test "$VERSION" = "$PROJECT_VERSION"
+
+      - name: Build release package
+        run: |
+          set -euo pipefail
+          python -m compileall -q app
+          rm -rf .release
+          mkdir -p .release
+          cp -R app .release/app
+          cp -R deploy .release/deploy
+          cp run.py requirements.txt pyproject.toml README.md LICENSE .release/
+          find .release -type d -name __pycache__ -prune -exec rm -rf {} +
+          find .release -type f \( -name '*.pyc' -o -name '*.pyo' \) -delete
+          tar -czf ostensory-server.tar.gz \
+            -C .release app deploy run.py requirements.txt pyproject.toml README.md LICENSE
+          sha256sum ostensory-server.tar.gz > SHA256SUMS.txt
+          ls -lh ostensory-server.tar.gz SHA256SUMS.txt
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          PRERELEASE=""
+          case "$VERSION" in
+            *dev*|*alpha*|*beta*|*rc*|*pre*) PRERELEASE="--prerelease" ;;
+          esac
+          gh release create "${GITHUB_REF_NAME}" \
+            ostensory-server.tar.gz SHA256SUMS.txt \
+            --title "Ostensory Server ${GITHUB_REF_NAME}" \
+            --generate-notes \
+            $PRERELEASE

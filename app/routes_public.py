@@ -31,6 +31,17 @@ from .config import Config
 from .database import audit, get_setting, set_setting
 from .duplicates import duplicate_filter_enabled, keep_newest_sql
 from .deps import get_config, get_db_conn, get_geo, get_storage, require_csrf
+from .engagement import (
+    anonymous_likes_allowed,
+    enabled as engagement_enabled,
+    like_count,
+    like_ranking,
+    liked_by,
+    record_view,
+    set_like,
+    totals as engagement_totals,
+    view_ranking,
+)
 from .geo import GeoResolver, client_ip
 from .guest_upload import (
     album_allowed,
@@ -49,6 +60,7 @@ from .guest_upload import (
     quota_bytes,
     verify_guest_key,
 )
+from .quotas import QuotaExceeded, ensure_user_quota, quota_status
 from .i18n import (
     LANGUAGE_COOKIE,
     LANGUAGE_COOKIE_MAX_AGE,
@@ -58,10 +70,15 @@ from .i18n import (
     tr,
 )
 from .security import (
+    actor_key_for_request,
     cookie_secure,
     current_admin,
+    current_user,
     guest_upload_limiter,
+    hash_password,
+    like_limiter,
     set_unlock_cookie,
+    set_visitor_cookie,
     signed_download_url,
     unlock_limiter,
     verify_download_token,
@@ -69,7 +86,9 @@ from .security import (
     verify_view_token,
 )
 from .services import create_asset_from_upload, extract_workflow, safe_display_name
+from .users import user_display_name
 from .storage import Storage, StorageError, StorageFull
+from .users import asset_author_name, author_user_id
 from .web import (
     asset_url,
     flash_redirect,
@@ -112,6 +131,15 @@ def _admin_logged_in(db: sqlite3.Connection, request: Request) -> bool:
     return bool(current_admin(db, request))
 
 
+def _external_access_allowed(db: sqlite3.Connection, request: Request) -> bool:
+    settings = site_settings(db)
+    if settings.get("external_image_enabled") != "1":
+        return False
+    if settings.get("external_image_guest_enabled", "1") == "1":
+        return True
+    return current_user(db, request) is not None
+
+
 def _asset_by_id(db: sqlite3.Connection, asset_id: int) -> sqlite3.Row | None:
     return db.execute(
         asset_query() + "WHERE a.id = ? AND a.deleted_at IS NULL", (asset_id,)
@@ -127,7 +155,12 @@ PUBLIC_ASSET_HIDDEN = {
     "access_password_hash",
     "client_path",
     "region_countries",
+    "owner_username",
+    "owner_role",
+    "owner_display_name",
 }
+
+PUBLIC_ASSET_SQL = " AND a.status = 'approved' AND a.visibility = 'public'"
 
 
 def public_asset_dict(row: sqlite3.Row | dict) -> dict:
@@ -149,11 +182,13 @@ def _decorate_assets(
     out: list[dict] = []
     for row in rows:
         decision = check_asset(request, db, config, geo, row, admin=admin)
-        if not decision.allowed and decision.reason == "region":
+        if not decision.allowed and decision.reason in {"region", "pending", "private"}:
             continue
         item = public_asset_dict(row)
         item["locked"] = decision.locked
         item["nsfw_effective"] = decision.nsfw
+        item["author_name"] = asset_author_name(row)
+        item["author_id"] = author_user_id(row)
         try:
             item["metadata"] = json.loads(row["metadata_json"] or "{}")
         except ValueError:
@@ -256,7 +291,7 @@ def _assets_by_ids(
     duplicate_filter = f" AND {keep_newest_sql()}" if hide_duplicates else ""
     rows = db.execute(
         asset_query()
-        + f"WHERE a.deleted_at IS NULL AND a.id IN ({placeholders}){duplicate_filter}",
+        + f"WHERE a.deleted_at IS NULL{PUBLIC_ASSET_SQL} AND a.id IN ({placeholders}){duplicate_filter}",
         tuple(ids),
     ).fetchall()
     by_id = {int(row["id"]): row for row in rows}
@@ -278,11 +313,11 @@ def _home_assets(
     if source == "all":
         return db.execute(
             asset_query()
-            + f"WHERE a.deleted_at IS NULL{duplicate_filter} ORDER BY a.id DESC"
+            + f"WHERE a.deleted_at IS NULL{PUBLIC_ASSET_SQL}{duplicate_filter} ORDER BY a.id DESC"
         ).fetchall()
     return db.execute(
         asset_query()
-        + f"WHERE a.deleted_at IS NULL{duplicate_filter} ORDER BY a.id DESC LIMIT ?",
+        + f"WHERE a.deleted_at IS NULL{PUBLIC_ASSET_SQL}{duplicate_filter} ORDER BY a.id DESC LIMIT ?",
         (per_page * 2,),
     ).fetchall()
 
@@ -332,7 +367,7 @@ def _home_carousel(
         duplicate_filter = f" AND {keep_newest_sql()}" if hide_duplicates else ""
         rows = db.execute(
             asset_query()
-            + f"WHERE a.deleted_at IS NULL{duplicate_filter} ORDER BY a.id DESC LIMIT 8"
+            + f"WHERE a.deleted_at IS NULL{PUBLIC_ASSET_SQL}{duplicate_filter} ORDER BY a.id DESC LIMIT 8"
         ).fetchall()
     assets = _decorate_assets(request, db, config, geo, rows, False)
     for asset in assets:
@@ -403,10 +438,12 @@ def home(
         like = f"%{search}%"
         rows = db.execute(
             asset_query()
-            + f"WHERE a.deleted_at IS NULL{_duplicate_filter(db)} AND (a.title LIKE ? OR a.original_name LIKE ? "
+            + f"WHERE a.deleted_at IS NULL{PUBLIC_ASSET_SQL}{_duplicate_filter(db)} AND (a.title LIKE ? OR a.original_name LIKE ? "
             "OR a.positive_prompt LIKE ? OR a.negative_prompt LIKE ? OR a.lora_names LIKE ? "
-            "OR a.description LIKE ? OR a.metadata_json LIKE ?) ORDER BY a.id DESC LIMIT 200",
-            (like, like, like, like, like, like, like),
+            "OR a.description LIKE ? OR a.metadata_json LIKE ? "
+            "OR owner.display_name LIKE ? OR owner.username LIKE ? OR a.author_name LIKE ?) "
+            "ORDER BY a.id DESC LIMIT 200",
+            (like, like, like, like, like, like, like, like, like, like),
         ).fetchall()
         assets = _decorate_assets(request, db, config, geo, rows, False)
         total = len(assets)
@@ -491,12 +528,12 @@ def browse(
     total = int(
         db.execute(
             "SELECT COUNT(*) AS n FROM assets a JOIN blobs b ON b.id = a.blob_id "
-            f"WHERE a.deleted_at IS NULL{duplicate_filter}"
+            f"WHERE a.deleted_at IS NULL{PUBLIC_ASSET_SQL}{duplicate_filter}"
         ).fetchone()["n"]
     )
     rows = db.execute(
         asset_query()
-        + f"WHERE a.deleted_at IS NULL{duplicate_filter} ORDER BY a.id DESC LIMIT ? OFFSET ?",
+        + f"WHERE a.deleted_at IS NULL{PUBLIC_ASSET_SQL}{duplicate_filter} ORDER BY a.id DESC LIMIT ? OFFSET ?",
         (per_page, (page - 1) * per_page),
     ).fetchall()
     assets = _decorate_assets(request, db, config, geo, rows, False)
@@ -534,12 +571,12 @@ def public_feed(
     total = int(
         db.execute(
             "SELECT COUNT(*) AS n FROM assets a JOIN blobs b ON b.id = a.blob_id "
-            f"WHERE a.deleted_at IS NULL{duplicate_filter}"
+            f"WHERE a.deleted_at IS NULL{PUBLIC_ASSET_SQL}{duplicate_filter}"
         ).fetchone()["n"]
     )
     rows = db.execute(
         asset_query()
-        + f"WHERE a.deleted_at IS NULL{duplicate_filter} ORDER BY a.id DESC LIMIT ? OFFSET ?",
+        + f"WHERE a.deleted_at IS NULL{PUBLIC_ASSET_SQL}{duplicate_filter} ORDER BY a.id DESC LIMIT ? OFFSET ?",
         (size, (page - 1) * size),
     ).fetchall()
     admin = _admin_logged_in(db, request)
@@ -605,7 +642,9 @@ def box_detail(
         item["box_name"] = box["name"]
     asset_rows = db.execute(
         asset_query()
-        + "WHERE a.box_id = ? AND a.deleted_at IS NULL ORDER BY a.id DESC",
+        + "WHERE a.box_id = ? AND a.deleted_at IS NULL"
+        + PUBLIC_ASSET_SQL
+        + " ORDER BY a.id DESC",
         (box_id,),
     ).fetchall()
     assets = _decorate_assets(request, db, config, geo, asset_rows, False)
@@ -638,7 +677,9 @@ def albums_index(
             continue
         rows = db.execute(
             asset_query()
-            + "WHERE a.album_id = ? AND a.deleted_at IS NULL ORDER BY a.id DESC LIMIT 6",
+            + "WHERE a.album_id = ? AND a.deleted_at IS NULL"
+            + PUBLIC_ASSET_SQL
+            + " ORDER BY a.id DESC LIMIT 6",
             (album["id"],),
         ).fetchall()
         album["previews"] = _decorate_assets(
@@ -660,11 +701,11 @@ def _public_stats(db: sqlite3.Connection, request: Request) -> dict:
         "SELECT a.id, a.album_id, a.created_at, a.updated_at, a.metadata_json, "
         "a.positive_prompt, a.lora_names, a.source, b.size "
         "FROM assets a JOIN blobs b ON b.id = a.blob_id "
-        "WHERE a.deleted_at IS NULL"
+        "WHERE a.deleted_at IS NULL" + PUBLIC_ASSET_SQL
     ).fetchall()
     album_rows = db.execute(
         "SELECT a.album_id, COUNT(*) AS n FROM assets a "
-        "WHERE a.deleted_at IS NULL AND a.album_id IS NOT NULL "
+        "WHERE a.deleted_at IS NULL" + PUBLIC_ASSET_SQL + " AND a.album_id IS NOT NULL "
         "GROUP BY a.album_id ORDER BY n DESC, a.album_id DESC"
     ).fetchall()
     album_names = {
@@ -803,6 +844,7 @@ def _public_stats(db: sqlite3.Connection, request: Request) -> dict:
 
     base_model_usage = usage_rows(base_usage)
     lora_usage_rows = usage_rows(lora_usage)
+    likes_total, views_total = engagement_totals(db)
     return {
         "images": len(rows),
         "albums": len(album_names),
@@ -823,6 +865,10 @@ def _public_stats(db: sqlite3.Connection, request: Request) -> dict:
         "lora_usage": lora_usage_rows,
         "base_model_usage_max": int(base_model_usage[0]["count"]) if base_model_usage else 0,
         "lora_usage_max": int(lora_usage_rows[0]["count"]) if lora_usage_rows else 0,
+        "like_total": likes_total,
+        "view_total": views_total,
+        "top_liked": like_ranking(db, 8),
+        "top_viewed": view_ranking(db, 8),
         "top_albums": albums,
         "guest_count": guest_count,
         "guest_bytes": guest_bytes,
@@ -859,6 +905,9 @@ def stats_page(
         "activity": str(settings.get("stats_show_activity", "1")) == "1",
         "albums": str(settings.get("stats_show_albums", "1")) == "1",
         "guest": str(settings.get("stats_show_guest", "0")) == "1",
+        "engagement": str(settings.get("stats_show_engagement", "1")) == "1",
+        "like_rank": str(settings.get("stats_show_like_rank", "1")) == "1",
+        "view_rank": str(settings.get("stats_show_view_rank", "1")) == "1",
     }
     return render(
         request,
@@ -904,6 +953,9 @@ def _guest_context(
     return {
         "guest_albums": choices,
         "guest_default_album_id": choices[0]["id"] if choices else None,
+        "upload_as_user": False,
+        "upload_user": None,
+        "upload_require_review": settings.get("upload_require_review") == "1",
         "guest_key_mode": mode,
         "guest_key_required": key_required(mode),
         "guest_key_configured": bool(
@@ -931,17 +983,77 @@ def _guest_context(
     }
 
 
+def _upload_context(
+    request: Request,
+    db: sqlite3.Connection,
+    config: Config,
+    geo: GeoResolver,
+) -> dict:
+    settings = site_settings(db)
+    viewer = current_user(db, request)
+    is_admin = bool(viewer and viewer["role"] == "admin")
+    guest_can_upload = settings.get("guest_upload_enabled") == "1"
+    user_switch_on = settings.get("user_upload_enabled") == "1"
+    # If guest upload is enabled while user upload is off, an administrator can
+    # still use the public guest flow (the historical behaviour). If both
+    # switches are off, the administrator keeps a personal upload page instead
+    # of being locked out; normal accounts still receive 403.
+    admin_guest_mode = is_admin and not user_switch_on and guest_can_upload
+    user_can_upload = bool(
+        viewer
+        and (user_switch_on or (is_admin and not admin_guest_mode))
+    )
+    if not user_can_upload and not guest_can_upload:
+        raise HTTPException(status_code=404, detail=tr(request, "error.guest_disabled"))
+    if viewer and not user_can_upload and not admin_guest_mode:
+        raise HTTPException(status_code=403, detail="当前账号没有上传权限。")
+    context = _guest_context(request, db, config, geo)
+    if user_can_upload:
+        albums = album_choices(db)
+        if not albums:
+            default_path = get_setting(db, "default_album_path", "未分类") or "未分类"
+            ensure_album_path(db, default_path, create=True)
+            db.commit()
+            albums = album_choices(db)
+        for album in albums:
+            decision = check_album(
+                request, db, config, geo, int(album["id"]), admin=False
+            )
+            album["upload_locked"] = bool(decision.locked)
+            album["upload_region_blocked"] = bool(
+                not decision.allowed and decision.reason == "region"
+            )
+        context.update(
+            {
+                "guest_albums": albums,
+                "guest_default_album_id": albums[0]["id"] if albums else None,
+                "upload_as_user": True,
+                "upload_user": viewer,
+                "upload_require_review": settings.get("upload_require_review") == "1",
+                "user_quota": quota_status(db, int(viewer["id"])),
+                "guest_key_required": False,
+                "guest_max_file_mb": min(
+                    parse_int(settings.get("max_upload_mb"), 200, 1, 2048),
+                    2048,
+                ),
+            }
+        )
+    return context
+
+
 @router.get("/upload")
 def guest_upload_page(
     request: Request,
+    album_id: str = "",
     db: sqlite3.Connection = Depends(get_db_conn),
     config: Config = Depends(get_config),
     geo: GeoResolver = Depends(get_geo),
 ):
-    settings = site_settings(db)
-    if settings.get("guest_upload_enabled") != "1":
-        raise HTTPException(status_code=404, detail=tr(request, "error.guest_disabled"))
-    context = _guest_context(request, db, config, geo)
+    context = _upload_context(request, db, config, geo)
+    if album_id.strip().isdigit():
+        requested = int(album_id)
+        if any(int(item["id"]) == requested for item in context["guest_albums"]):
+            context["guest_default_album_id"] = requested
     return render(request, db, "guest_upload.html", context)
 
 
@@ -989,6 +1101,8 @@ async def guest_upload_submit(
     title: str = Form(""),
     description: str = Form(""),
     titles: str = Form("[]"),
+    access_password: str = Form(""),
+    visibility: str = Form("public"),
     csrf: str = Form(""),
     db: sqlite3.Connection = Depends(get_db_conn),
     config: Config = Depends(get_config),
@@ -997,10 +1111,25 @@ async def guest_upload_submit(
 ):
     require_csrf(request, csrf, config)
     settings = site_settings(db)
-    if settings.get("guest_upload_enabled") != "1":
+    viewer = current_user(db, request)
+    is_admin = bool(viewer and viewer["role"] == "admin")
+    guest_upload = settings.get("guest_upload_enabled") == "1"
+    user_switch_on = settings.get("user_upload_enabled") == "1"
+    admin_guest_upload = bool(is_admin and not user_switch_on and guest_upload)
+    user_upload = bool(
+        viewer and (user_switch_on or (is_admin and not admin_guest_upload))
+    )
+    if not viewer and not guest_upload:
         raise HTTPException(status_code=404, detail=tr(request, "error.guest_disabled"))
+    if viewer and not user_upload and not admin_guest_upload:
+        raise HTTPException(status_code=403, detail="当前账号没有上传权限。")
     uploads = [item for item in (files or []) if item.filename]
-    context = _guest_context(request, db, config, geo)
+    context = _upload_context(request, db, config, geo)
+    require_review = settings.get("upload_require_review") == "1"
+    access_password = access_password.strip()[:200]
+    visibility_value = visibility if visibility in {"public", "private"} else "public"
+    if not user_upload:
+        visibility_value = "public"
     if not uploads:
         return redirect("/upload?error=" + quote(tr(request, "error.upload_pick_one")))
     if len(uploads) > context["guest_max_files"]:
@@ -1017,15 +1146,20 @@ async def guest_upload_submit(
         ).fetchone()
     else:
         default_path = get_setting(db, "default_album_path", "未分类") or "未分类"
-        target_album = ensure_album_path(db, default_path, create=False)
+        target_album = ensure_album_path(db, default_path, create=bool(user_upload))
     if not target_album:
         return redirect("/upload?error=" + quote(tr(request, "error.album_missing")))
-    if not album_allowed(db, int(target_album["id"])):
+    if not user_upload and not album_allowed(db, int(target_album["id"])):
         return redirect("/upload?error=" + quote(tr(request, "error.album_guest_blocked")))
     album_decision = check_album(
         request, db, config, geo, int(target_album["id"]), admin=False
     )
-    if not album_decision.allowed or album_decision.locked:
+    if album_decision.locked:
+        next_url = f"/upload?album_id={int(target_album['id'])}"
+        return redirect(
+            f"/unlock/album/{int(target_album['id'])}?next={quote(next_url)}"
+        )
+    if not album_decision.allowed:
         return redirect("/upload?error=" + quote(tr(request, "error.album_guest_region")))
 
     max_file_bytes = context["guest_max_file_mb"] * 1024 * 1024
@@ -1038,76 +1172,95 @@ async def guest_upload_submit(
     ip = client_ip(request, config)
     # Guest uploads are only linked to an IP when the administrator explicitly
     # enables the privacy-sensitive trace option.
-    trace_ip = settings.get("guest_upload_log_ip") == "1"
-    interval = context["guest_interval_seconds"]
-    if interval and not guest_upload_limiter.allow(f"guest-up:{ip}", 1, interval):
-        return redirect(
-            "/upload?error="
-            + quote(tr(request, "error.upload_rate", seconds=interval))
-        )
+    trace_ip = (not user_upload) and settings.get("guest_upload_log_ip") == "1"
     mode = context["guest_key_mode"]
-    if not guest_upload_limiter.allow(f"guest-key:{ip}", 12, 300):
-        return redirect("/upload?error=" + quote(tr(request, "error.upload_attempts")))
-    ok, key_error = verify_guest_key(db, config, mode, key, consume=False)
-    if not ok:
-        key_error_keys = {
-            "请填写访客上传密钥。": "error.guest_key_missing",
-            "管理员还没有设置固定密钥。": "error.guest_key_not_set",
-            "上传密钥不正确。": "error.guest_key_wrong",
-            "上传密钥不正确或已经过期。": "error.guest_key_expired",
-            "一次性密钥已经被使用，请联系管理员重新生成。": "error.guest_key_used",
-            "管理员还没有生成一次性密钥。": "error.guest_key_not_generated",
-            "访客上传密钥配置不正确。": "error.guest_key_config",
-        }
-        return redirect(
-            "/upload?error="
-            + quote(tr(request, key_error_keys.get(key_error, "error.guest_key")))
-        )
+    if user_upload:
+        if not guest_upload_limiter.allow(f"user-up:{int(viewer['id'])}", 12, 60):
+            return redirect("/upload?error=" + quote(tr(request, "error.upload_rate", seconds=60)))
+    else:
+        interval = context["guest_interval_seconds"]
+        if interval and not guest_upload_limiter.allow(f"guest-up:{ip}", 1, interval):
+            return redirect(
+                "/upload?error="
+                + quote(tr(request, "error.upload_rate", seconds=interval))
+            )
+        if not guest_upload_limiter.allow(f"guest-key:{ip}", 12, 300):
+            return redirect("/upload?error=" + quote(tr(request, "error.upload_attempts")))
+        ok, key_error = verify_guest_key(db, config, mode, key, consume=False)
+        if not ok:
+            key_error_keys = {
+                "请填写访客上传密钥。": "error.guest_key_missing",
+                "管理员还没有设置固定密钥。": "error.guest_key_not_set",
+                "上传密钥不正确。": "error.guest_key_wrong",
+                "上传密钥不正确或已经过期。": "error.guest_key_expired",
+                "一次性密钥已经被使用，请联系管理员重新生成。": "error.guest_key_used",
+                "管理员还没有生成一次性密钥。": "error.guest_key_not_generated",
+                "访客上传密钥配置不正确。": "error.guest_key_config",
+            }
+            return redirect(
+                "/upload?error="
+                + quote(tr(request, key_error_keys.get(key_error, "error.guest_key")))
+            )
 
+    access_hash = hash_password(access_password) if access_password else None
     selected_titles = parse_titles(titles)
     created = 0
     duplicates = 0
     errors: list[str] = []
     deleted_assets: list[dict] = []
     new_asset_ids: set[int] = set()
+    quota_pending = 0
     for index, upload in enumerate(uploads):
         incoming = sizes[index] or 0
-        state = guest_capacity_state(
-            db,
-            int(target_album["id"]),
-            incoming,
-            context["guest_quota_mb"],
-        )
-        if state["album_short"] or state["total_short"]:
-            removed: list[dict] = []
-            if context["guest_cycle_enabled"]:
-                removed = make_room_for_guest_upload(
+        if user_upload and viewer:
+            try:
+                ensure_user_quota(
                     db,
                     storage,
-                    int(target_album["id"]),
+                    int(viewer["id"]),
                     incoming,
-                    context["guest_quota_mb"],
-                    context["guest_cycle_scope"],
-                    exclude_ids=new_asset_ids,
+                    pending_bytes=quota_pending,
                 )
-                deleted_assets.extend(removed)
-                state = guest_capacity_state(
-                    db,
-                    int(target_album["id"]),
-                    incoming,
-                    context["guest_quota_mb"],
-                )
-            if state["album_short"] or state["total_short"]:
-                errors.append(
-                    _guest_capacity_error(
-                        request,
-                        str(target_album["name"]),
-                        state,
-                        cycle_on=context["guest_cycle_enabled"],
-                        cleanup_happened=bool(removed),
-                    )
-                )
+            except QuotaExceeded as exc:
+                errors.append(f"{safe_display_name(upload.filename or '')}: {exc}")
                 continue
+        if not user_upload:
+            state = guest_capacity_state(
+                db,
+                int(target_album["id"]),
+                incoming,
+                context["guest_quota_mb"],
+            )
+            if state["album_short"] or state["total_short"]:
+                removed: list[dict] = []
+                if context["guest_cycle_enabled"]:
+                    removed = make_room_for_guest_upload(
+                        db,
+                        storage,
+                        int(target_album["id"]),
+                        incoming,
+                        context["guest_quota_mb"],
+                        context["guest_cycle_scope"],
+                        exclude_ids=new_asset_ids,
+                    )
+                    deleted_assets.extend(removed)
+                    state = guest_capacity_state(
+                        db,
+                        int(target_album["id"]),
+                        incoming,
+                        context["guest_quota_mb"],
+                    )
+                if state["album_short"] or state["total_short"]:
+                    errors.append(
+                        _guest_capacity_error(
+                            request,
+                            str(target_album["name"]),
+                            state,
+                            cycle_on=context["guest_cycle_enabled"],
+                            cleanup_happened=bool(removed),
+                        )
+                    )
+                    continue
         chosen_title = (
             selected_titles[index]
             if index < len(selected_titles) and selected_titles[index]
@@ -1121,21 +1274,36 @@ async def guest_upload_submit(
                 upload.file,
                 upload.filename or "upload",
                 int(target_album["id"]),
-                source_name="guest",
+                source_name="user" if user_upload else "guest",
                 upload_ip=ip if trace_ip else "",
                 title=chosen_title,
                 description=description,
+                owner_id=(
+                    int(viewer["id"])
+                    if viewer and (user_upload or admin_guest_upload)
+                    else None
+                ),
+                author_name=(
+                    user_display_name(viewer)
+                    if viewer and (user_upload or admin_guest_upload)
+                    else "未知用户"
+                ),
+                status="pending" if require_review else "approved",
+                visibility=visibility_value,
+                access_password_hash=access_hash,
             )
             if asset is not None:
                 new_asset_ids.add(int(asset["id"]))
             created += 1
             if status == "duplicate":
                 duplicates += 1
+            else:
+                quota_pending += incoming
         except StorageFull as exc:
             errors.append(f"{safe_display_name(upload.filename or '')}: {exc}")
         except (StorageError, ValueError, OSError) as exc:
             errors.append(f"{safe_display_name(upload.filename or '')}: {exc}")
-    if created and mode == "once":
+    if created and mode == "once" and not user_upload:
         set_setting(db, "guest_upload_once_used", "1")
     if deleted_assets:
         audit(
@@ -1152,8 +1320,8 @@ async def guest_upload_submit(
         )
     audit(
         db,
-        "guest.upload",
-        actor="guest",
+        "user.upload" if user_upload else "guest.upload",
+        actor=str(viewer["username"]) if user_upload and viewer else "guest",
         target=str(target_album["id"]),
         detail=(
             f"created={created} errors={len(errors)} "
@@ -1176,6 +1344,10 @@ async def guest_upload_submit(
         count=created,
         album=target_album["name"],
     )
+    if require_review:
+        message += " 图片已提交审核，管理员放行后才会公开显示。"
+    if access_password:
+        message += " 已设置访问密码，查看详情或原图时需要先输入该密码。"
     if duplicates:
         message += tr(request, "guest.duplicates", count=duplicates)
     if errors:
@@ -1228,7 +1400,9 @@ def album_detail(
         )
     rows = db.execute(
         asset_query()
-        + "WHERE a.album_id = ? AND a.deleted_at IS NULL ORDER BY a.id DESC",
+        + "WHERE a.album_id = ? AND a.deleted_at IS NULL"
+        + PUBLIC_ASSET_SQL
+        + " ORDER BY a.id DESC",
         (album_id,),
     ).fetchall()
     assets = _decorate_assets(request, db, config, geo, rows, False)
@@ -1271,6 +1445,8 @@ def image_detail(
     decision = check_asset(request, db, config, geo, asset, admin=False)
     if not decision.allowed and decision.reason == "region":
         raise HTTPException(status_code=451, detail=tr(request, "error.region_short"))
+    if not decision.allowed and decision.reason in {"pending", "private"}:
+        raise HTTPException(status_code=404, detail=tr(request, "error.image_missing"))
     if decision.locked:
         return render(
             request,
@@ -1303,10 +1479,10 @@ def image_detail(
     # Keep navigation in the exact order shown by the album / all-images page.
     # Both pages list newest first, so "previous" is the next higher id.
     if gallery_source == "album":
-        scope_sql = "a.album_id = ? AND "
+        scope_sql = "a.album_id = ? AND a.status = 'approved' AND a.visibility = 'public' AND "
         scope_params: tuple = (asset["album_id"],)
     else:
-        scope_sql = ""
+        scope_sql = "a.status = 'approved' AND a.visibility = 'public' AND "
         scope_params = ()
     prev_row = db.execute(
         asset_query()
@@ -1332,18 +1508,38 @@ def image_detail(
     if asset["album_id"]:
         related_rows = db.execute(
             asset_query()
-            + "WHERE a.album_id = ? AND a.id != ? AND a.deleted_at IS NULL ORDER BY a.id DESC LIMIT 10",
+            + "WHERE a.album_id = ? AND a.id != ? AND a.deleted_at IS NULL"
+            + PUBLIC_ASSET_SQL
+            + " ORDER BY a.id DESC LIMIT 10",
             (asset["album_id"], asset_id),
         ).fetchall()
     related = _decorate_assets(request, db, config, geo, related_rows, False)[:8]
     effective = asset_effective(db, asset)
-    return render(
+    viewer = current_user(db, request)
+    actor_key, visitor_cookie = actor_key_for_request(request, db, config, viewer)
+    engage_on = engagement_enabled(db)
+    view_added = record_view(db, asset_id, actor_key) if engage_on else False
+    if engage_on:
+        db.commit()
+    likes = like_count(db, asset_id) if engage_on else 0
+    views = (int(asset["views"] or 0) + (1 if view_added else 0)) if engage_on else 0
+    liked = liked_by(db, asset_id, actor_key) if engage_on else False
+    can_like = engage_on and bool(viewer or anonymous_likes_allowed(db))
+    asset_item = public_asset_dict(asset)
+    asset_item["author_name"] = asset_author_name(asset)
+    asset_item["author_id"] = author_user_id(asset)
+    response = render(
         request,
         db,
         "image.html",
         {
-            "asset": public_asset_dict(asset),
+            "asset": asset_item,
             "metadata": metadata,
+            "engagement_enabled": engage_on,
+            "like_count": likes,
+            "view_count": views,
+            "liked": liked,
+            "can_like": can_like,
             "album": dict(album_row) if album_row else None,
             "box": dict(box_row) if box_row else None,
             "related": related,
@@ -1359,6 +1555,93 @@ def image_detail(
             "prompt_json": (metadata.get("raw") or {}).get("prompt"),
         },
     )
+    set_visitor_cookie(response, request, config, visitor_cookie)
+    return response
+
+
+@router.post("/images/{asset_id}/like")
+def image_like(
+    asset_id: int,
+    request: Request,
+    next: str = Form(""),
+    desired: str = Form(""),
+    csrf: str = Form(""),
+    db: sqlite3.Connection = Depends(get_db_conn),
+    config: Config = Depends(get_config),
+    geo: GeoResolver = Depends(get_geo),
+):
+    wants_json = (
+        request.headers.get("x-requested-with", "").lower() == "fetch"
+        or "application/json" in request.headers.get("accept", "").lower()
+    )
+    require_csrf(request, csrf, config)
+    if not engagement_enabled(db):
+        raise HTTPException(status_code=404, detail="点赞功能未开启")
+    asset = _asset_by_id(db, asset_id)
+    if not asset:
+        raise HTTPException(status_code=404, detail=tr(request, "error.image_missing"))
+    decision = check_asset(
+        request, db, config, geo, asset, admin=_admin_logged_in(db, request)
+    )
+    if not decision.allowed:
+        raise HTTPException(status_code=404, detail=tr(request, "error.image_missing"))
+    viewer = current_user(db, request)
+    if not viewer and not anonymous_likes_allowed(db):
+        destination = safe_next(next, f"/images/{asset_id}")
+        return redirect("/login?next=" + quote(destination))
+    ip = client_ip(request, config)
+    actor_key, visitor_cookie = actor_key_for_request(request, db, config, viewer)
+    limited = not like_limiter.allow(f"like:{ip}:{asset_id}", 20, 60)
+    if not limited:
+        limited = not like_limiter.allow(f"like-actor:{actor_key}", 30, 60)
+    if limited:
+        if wants_json:
+            response = JSONResponse(
+                {"ok": False, "error": "操作过于频繁，请稍后再试。"},
+                status_code=429,
+                headers={"Cache-Control": "no-store"},
+            )
+        else:
+            response = redirect(
+                safe_next(next, f"/images/{asset_id}")
+                + "?msg="
+                + quote("操作过于频繁，请稍后再试。")
+            )
+        set_visitor_cookie(response, request, config, visitor_cookie)
+        return response
+    desired_state = True if desired == "1" else False if desired == "0" else None
+    liked, count, changed = set_like(
+        db,
+        asset_id,
+        actor_key,
+        int(viewer["id"]) if viewer else None,
+        desired_state,
+    )
+    if changed:
+        audit(
+            db,
+            "asset.like" if liked else "asset.unlike",
+            actor=str(viewer["username"]) if viewer else "guest",
+            target=str(asset_id),
+            ip=ip if viewer else "",
+        )
+    db.commit()
+    if wants_json:
+        response = JSONResponse(
+            {"ok": True, "liked": liked, "count": count, "changed": changed},
+            headers={"Cache-Control": "no-store"},
+        )
+        set_visitor_cookie(response, request, config, visitor_cookie)
+        return response
+    destination = safe_next(next, f"/images/{asset_id}")
+    separator = "&" if "?" in destination else "?"
+    response = redirect(
+        f"{destination}{separator}msg="
+        + quote("已点赞。" if liked else "已取消点赞。")
+        + "#engagement"
+    )
+    set_visitor_cookie(response, request, config, visitor_cookie)
+    return response
 
 
 def _unlock_target(
@@ -1502,7 +1785,7 @@ def _media_response(
         raise HTTPException(status_code=404, detail=tr(request, "error.image_missing"))
     admin = _admin_logged_in(db, request)
     if kind == "original" and not admin and not allow_original:
-        if site_settings(db).get("external_image_enabled") != "1":
+        if not _external_access_allowed(db, request):
             raise HTTPException(status_code=403, detail=tr(request, "error.external_disabled"))
     decision = check_asset(request, db, config, geo, asset, admin=admin)
     if not decision.allowed:
@@ -1512,9 +1795,17 @@ def _media_response(
     key_field = {"thumb": "thumb_key", "preview": "preview_key", "original": "storage_key"}.get(kind)
     if not key_field:
         raise HTTPException(status_code=404)
+    # Turning previews off must also stop serving old preview files. Falling
+    # back to the original makes the switch effective immediately without
+    # requiring a destructive cleanup first.
+    served_kind = kind
+    if kind == "preview" and get_setting(db, "preview_enabled", "1") != "1":
+        served_kind = "original"
+        key_field = "storage_key"
     key = asset[key_field]
     if not key:
         key = asset["storage_key"]
+        served_kind = "original"
     path = storage.path_for(key)
     if not path or not path.exists():
         raise HTTPException(status_code=404, detail=tr(request, "error.file_missing"))
@@ -1533,9 +1824,11 @@ def _media_response(
             )
         ),
         "X-Content-Type-Options": "nosniff",
-        "ETag": f'"{asset["sha256"]}-{kind}"',
+        "ETag": f'"{asset["sha256"]}-{served_kind}"',
     }
-    media_type = "image/webp" if kind in {"thumb", "preview"} else asset["mime"]
+    media_type = (
+        "image/webp" if served_kind in {"thumb", "preview"} else asset["mime"]
+    )
     if download:
         headers["Content-Disposition"] = (
             f"attachment; filename*=UTF-8''{quote(safe_display_name(asset['original_name']))}"
@@ -1611,8 +1904,7 @@ def embed_image(
     storage: Storage = Depends(get_storage),
 ):
     """Raw image endpoint intended for <img> hotlinks from other websites."""
-    settings = site_settings(db)
-    if settings.get("external_image_enabled") != "1":
+    if not _external_access_allowed(db, request):
         raise HTTPException(status_code=403, detail=tr(request, "error.external_disabled"))
     asset = _asset_by_id(db, asset_id)
     if not asset:

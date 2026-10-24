@@ -6,6 +6,8 @@
   <form method="post" action="{{ admin_url('/account') }}" class="stack-form">
     <input type="hidden" name="csrf" value="{{ csrf_token }}">
     <label>用户名<input name="username" value="{{ admin.username }}" required maxlength="64"></label>
+    <label>显示名称<input name="display_name" value="{{ admin.display_name or '' }}" maxlength="40" placeholder="留空则署名“管理员”"></label>
+    <p class="muted small">显示名称会作为以后上传作品的作者名；留空时管理员署名为“管理员”。</p>
     <label>当前密码<input type="password" name="current_password" required autocomplete="current-password"></label>
     <hr>
     <label>新密码<input type="password" name="new_password" autocomplete="new-password" placeholder="留空则不修改"></label>

@@ -1,0 +1,49 @@
+{% extends "admin/base_admin.html" %}
+{% block title %}用户 · 管理后台{% endblock %}
+{% block content %}
+<div class="page-title"><div><p class="eyebrow">USERS</p><h1>用户</h1><p class="muted">共 {{ users|length }} 个账号。管理员账号也能在这里管理，但不能停用或删除自己。</p></div></div>
+
+<div class="admin-split">
+  <section class="panel">
+    <div class="panel-head"><h2>账号列表</h2></div>
+    <div class="table-wrap">
+      <table class="data-table">
+        <thead><tr><th>ID</th><th>用户名 / 署名</th><th>角色</th><th>状态</th><th>作品</th><th>个人配额</th><th>最近登录</th><th></th></tr></thead>
+        <tbody>
+          {% for item in users %}
+          <tr>
+            <td>{{ item.id }}</td>
+            <td><strong>{{ item.username }}</strong>{% if item.display_name %}<br><span class="muted small">{{ item.display_name }}</span>{% endif %}</td>
+            <td>{{ '管理员' if item.role == 'admin' else '普通用户' }}</td>
+            <td>{% if item.is_active %}<span class="status-pill status-approved">正常</span>{% else %}<span class="status-pill status-rejected">已停用</span>{% endif %}</td>
+            <td>{{ item.asset_count }}</td>
+            <td class="muted small">{% if item.quota.unlimited %}不限{% else %}{{ item.quota.used_bytes|filesize }} / {{ item.quota.limit_mb }} MB{% endif %}</td>
+            <td class="muted small">{{ item.last_login_at or '—' }}</td>
+            <td><a class="button ghost small-button" href="{{ admin_url('/users/' ~ item.id) }}">管理</a></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="panel narrow-panel">
+    <div class="panel-head"><h2>添加用户</h2><span class="muted small">无需访客注册</span></div>
+    <form method="post" action="{{ admin_url('/users') }}" class="stack-form">
+      <input type="hidden" name="csrf" value="{{ csrf_token }}">
+      <label>用户名<input name="username" required minlength="3" maxlength="64" pattern="[A-Za-z0-9_.@-]{3,64}"></label>
+      <label>显示名称 <span class="muted small">可选</span><input name="display_name" maxlength="40"></label>
+      <label>初始密码<input type="password" name="password" required minlength="8" maxlength="200" autocomplete="new-password"></label>
+      <label>角色
+        <select name="role">
+          <option value="user">普通用户</option>
+          <option value="admin">管理员</option>
+        </select>
+      </label>
+      <label>个人配额（MB） <span class="muted small">可选；0 表示不限</span><input type="number" name="quota_mb" min="0" max="10000000" placeholder="留空按后台策略自动分配"></label>
+      <p class="muted small">管理员可以进入后台。只在确实需要时授予。留空时会按“设置 → 用户个人配额”的固定值或弹性容量自动分配。</p>
+      <button class="button" type="submit">创建用户</button>
+    </form>
+  </section>
+</div>
+{% endblock %}

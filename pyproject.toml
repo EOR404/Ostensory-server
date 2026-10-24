@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ostensory"
-version = "0.0.1dev"
+version = "0.1.0"
 description = "ComfyUI 图片与生成参数图床"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -34,6 +34,7 @@ app = [
     "schema.sql",
     "templates/*.html",
     "templates/admin/*.html",
+    "templates/auth/*.html",
     "templates/partials/*.html",
     "static/*.css",
     "static/*.js",

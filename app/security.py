@@ -26,6 +26,7 @@ SCRYPT_DKLEN = 32
 SESSION_COOKIE = "cb_session"
 CSRF_COOKIE = "cb_csrf"
 UNLOCK_COOKIE = "cb_unlock"
+VISITOR_COOKIE = "cb_visitor"
 VIEW_TOKEN_TTL = 15 * 60
 
 # Login protection is deliberately per-client-IP, not per-account.  A wrong
@@ -197,7 +198,7 @@ def get_session_user(db: sqlite3.Connection, token: str | None) -> sqlite3.Row |
         "JOIN users u ON u.id = s.user_id WHERE s.token_hash = ?",
         (sha256_token(token),),
     ).fetchone()
-    if not row:
+    if not row or not int(row["is_active"] if "is_active" in row.keys() else 1):
         return None
     try:
         expires = datetime.fromisoformat(row["expires_at"].replace("Z", "+00:00"))
@@ -213,8 +214,67 @@ def current_session_token(request: Request) -> str | None:
     return request.cookies.get(SESSION_COOKIE)
 
 
-def current_admin(db: sqlite3.Connection, request: Request) -> sqlite3.Row | None:
+def current_user(db: sqlite3.Connection, request: Request) -> sqlite3.Row | None:
     return get_session_user(db, current_session_token(request))
+
+
+def current_admin(db: sqlite3.Connection, request: Request) -> sqlite3.Row | None:
+    user = current_user(db, request)
+    if not user or str(user["role"] if "role" in user.keys() else "") != "admin":
+        return None
+    return user
+
+
+def _visitor_signature(raw: str, config: Config) -> str:
+    return hmac.new(
+        config.secret_key, f"visitor:{raw}".encode("utf-8"), hashlib.sha256
+    ).hexdigest()[:32]
+
+
+def ensure_visitor(request: Request, config: Config) -> tuple[str, str | None]:
+    """Return a stable signed visitor key and a new cookie value if needed.
+
+    The cookie is not an account; it only prevents trivial repeat likes/views
+    from the same browser.  Logged-in users use their account id instead, so a
+    cookie reset cannot be used to like the same image repeatedly.
+    """
+    raw = request.cookies.get(VISITOR_COOKIE, "")
+    if raw and "." in raw:
+        token, signature = raw.rsplit(".", 1)
+        if token and hmac.compare_digest(signature, _visitor_signature(token, config)):
+            return f"v:{token}", None
+    token = secrets.token_urlsafe(24)
+    return f"v:{token}", f"{token}.{_visitor_signature(token, config)}"
+
+
+def actor_key_for_request(
+    request: Request,
+    db: sqlite3.Connection,
+    config: Config,
+    user: sqlite3.Row | None,
+) -> tuple[str, str | None]:
+    if user:
+        return f"u:{int(user['id'])}", None
+    return ensure_visitor(request, config)
+
+
+def set_visitor_cookie(
+    response: Response,
+    request: Request,
+    config: Config,
+    value: str | None,
+) -> None:
+    if not value:
+        return
+    response.set_cookie(
+        VISITOR_COOKIE,
+        value,
+        max_age=365 * 86400,
+        httponly=True,
+        samesite="lax",
+        secure=cookie_secure(request, config),
+        path="/",
+    )
 
 
 def delete_session(db: sqlite3.Connection, token: str | None) -> None:
@@ -235,11 +295,12 @@ def authenticate_api_token(db: sqlite3.Connection, token: str | None) -> sqlite3
     if not token or not token.startswith("cbk_"):
         return None
     row = db.execute(
-        "SELECT t.*, u.username FROM api_tokens t JOIN users u ON u.id = t.user_id "
+        "SELECT t.*, u.id AS account_id, u.username, u.role, u.display_name, u.is_active "
+        "FROM api_tokens t JOIN users u ON u.id = t.user_id "
         "WHERE t.token_hash = ? AND t.revoked_at IS NULL",
         (sha256_token(token),),
     ).fetchone()
-    if not row:
+    if not row or not int(row["is_active"]):
         return None
     db.execute("UPDATE api_tokens SET last_used_at = ? WHERE id = ?", (utc_now(), row["id"]))
     return row
@@ -496,6 +557,8 @@ def cooldown_text(seconds: int) -> str:
 
 unlock_limiter = RateLimiter()
 guest_upload_limiter = RateLimiter()
+auth_limiter = RateLimiter()
+like_limiter = RateLimiter()
 
 
 def token_preview(token: str) -> str:

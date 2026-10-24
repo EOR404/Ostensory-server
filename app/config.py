@@ -6,7 +6,9 @@ import secrets
 from dataclasses import dataclass, field
 from pathlib import Path
 
-APP_VERSION = "0.0.1dev"
+from . import __version__
+
+APP_VERSION = __version__
 
 
 def _read_or_create_key(path: Path, nbytes: int = 32) -> bytes:
@@ -80,6 +82,12 @@ class Config:
         server_dir = Path(server_dir or Path(__file__).resolve().parents[1]).resolve()
         raw_data = data_dir or os.environ.get("OSTENSORY_DATA_DIR") or (server_dir / "data")
         data_dir = Path(raw_data).resolve()
+        # A previous import may have been interrupted after moving files but
+        # before the database/keys were complete.  Restore the pre-import copy
+        # before any key is read or any new key is created.
+        from .migration_recovery import recover_pending_migration
+
+        recover_pending_migration(data_dir, server_dir)
         data_dir.mkdir(parents=True, exist_ok=True)
         try:
             # The database, originals and keys all live below this directory;

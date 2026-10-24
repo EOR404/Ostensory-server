@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% block body_class %} page-account{% endblock %}
+{% block title %}{{ page_title }} · {{ settings.site_name }}{% endblock %}
+{% block content %}
+<section class="page-heading account-heading">
+  <div>
+    <p class="eyebrow">MY ACCOUNT</p>
+    <h1>{{ account_author }}</h1>
+    <p class="muted">@{{ user.username }} · {{ '管理员' if user.role == 'admin' else '注册用户' }}</p>
+  </div>
+  <div class="inline-actions">
+    <a class="button ghost" href="/authors/{{ user.id }}">公开作者页</a>
+    {% if is_admin %}<a class="button ghost" href="{{ admin_url('') }}">后台</a>{% endif %}
+    <form method="post" action="/logout">
+      <input type="hidden" name="csrf" value="{{ csrf_token }}">
+      <button class="button ghost" type="submit">退出登录</button>
+    </form>
+  </div>
+</section>
+
+<div class="account-grid">
+  <section class="panel account-panel">
+    <div class="panel-head"><h2>账户资料</h2><span class="muted small">署名会用于以后上传的作品</span></div>
+    <form method="post" action="/account" class="auth-form compact-form">
+      <input type="hidden" name="csrf" value="{{ csrf_token }}">
+      <label>显示名称<input name="display_name" maxlength="40" value="{{ user.display_name or '' }}" placeholder="{{ account_author }}"></label>
+      <p class="muted small">不填写时，管理员显示为“管理员”，普通用户显示用户名。</p>
+      <div class="form-divider"></div>
+      <p class="muted small">只修改资料时不需要填写密码；修改密码时需要验证当前密码。</p>
+      <label>当前密码<input name="current_password" type="password" maxlength="200" autocomplete="current-password"></label>
+      <label>新密码<input name="new_password" type="password" minlength="8" maxlength="200" autocomplete="new-password"></label>
+      <label>确认新密码<input name="new_password2" type="password" minlength="8" maxlength="200" autocomplete="new-password"></label>
+      <button class="button" type="submit">保存资料</button>
+    </form>
+  </section>
+
+  <section class="account-works">
+    <div class="section-heading"><h2>我的作品</h2><span class="muted small">{{ account_assets|length }} 张</span></div>
+    {% if account_assets %}
+    <div class="account-work-list">
+      {% for asset in account_assets %}
+      <article class="account-work">
+        <a class="account-work-thumb" href="/images/{{ asset.id }}">
+          <img src="{{ media_url(asset.id, 'thumb', asset.sha256) }}" alt="" loading="lazy" width="{{ asset.width }}" height="{{ asset.height }}">
+        </a>
+        <div class="account-work-body">
+          <div class="account-work-head">
+            <a href="/images/{{ asset.id }}">{{ asset.title or asset.original_name }}</a>
+            <span class="status-pill status-{{ asset.status }}">{% if asset.status == 'pending' %}待审核{% elif asset.status == 'rejected' %}未通过{% else %}已发布{% endif %}</span>
+          </div>
+          <p class="muted small">{{ asset.views }} 次浏览 · {{ asset.author_name }}</p>
+          {% if asset.review_note %}<p class="muted small">审核备注：{{ asset.review_note }}</p>{% endif %}
+          <form method="post" action="/account/assets/{{ asset.id }}" class="account-asset-form">
+            <input type="hidden" name="csrf" value="{{ csrf_token }}">
+            <select name="album_id" aria-label="移动到相册">
+              {% for album in all_albums %}<option value="{{ album.id }}" {% if album.id == asset.album_id %}selected{% endif %}>{{ '— ' * album.depth }}{{ album.name }}</option>{% endfor %}
+            </select>
+            <select name="visibility" aria-label="可见性">
+              <option value="public" {% if asset.visibility != 'private' %}selected{% endif %}>公开</option>
+              <option value="private" {% if asset.visibility == 'private' %}selected{% endif %}>仅自己</option>
+            </select>
+            <button class="button ghost small-button" type="submit">保存</button>
+          </form>
+          <form method="post" action="/account/assets/{{ asset.id }}/delete" data-confirm="把这张图片移入回收站？">
+            <input type="hidden" name="csrf" value="{{ csrf_token }}">
+            <button class="link-button danger-link" type="submit">删除</button>
+          </form>
+        </div>
+      </article>
+      {% endfor %}
+    </div>
+    {% else %}
+    <div class="empty-state"><p class="empty-title">还没有上传作品</p><p>登录后到上传页选择图片。</p></div>
+    {% endif %}
+  </section>
+</div>
+{% endblock %}

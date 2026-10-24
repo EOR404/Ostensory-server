@@ -11,7 +11,7 @@ from starlette.requests import Request
 from .config import Config
 from .database import get_setting, utc_now
 from .geo import GeoResolver, region_decision
-from .security import unlock_scopes
+from .security import current_user, unlock_scopes
 
 SEGMENT_RE = re.compile(r"^[^/\\\x00-\x1f]{1,80}$")
 
@@ -234,6 +234,16 @@ def check_asset(
     effective = asset_effective(db, asset)
     if admin:
         return AccessDecision(True, "admin", False, None, effective.nsfw)
+    keys = asset.keys() if hasattr(asset, "keys") else asset
+    viewer = current_user(db, request)
+    owner_id = asset["owner_id"] if "owner_id" in keys else None
+    is_owner = bool(viewer and owner_id and int(viewer["id"]) == int(owner_id))
+    status = str(asset["status"] if "status" in keys else "approved")
+    visibility = str(asset["visibility"] if "visibility" in keys else "public")
+    if status != "approved" and not is_owner:
+        return AccessDecision(False, "pending", False, None, effective.nsfw)
+    if visibility == "private" and not is_owner:
+        return AccessDecision(False, "private", False, None, effective.nsfw)
     if get_setting(db, "experimental_features", "0") == "1":
         fail_mode = get_setting(db, "geoip_fail_mode", "block")
         allowed, reason = region_decision(
@@ -331,11 +341,14 @@ def asset_query() -> str:
         "SELECT a.*, b.sha256, b.storage_key, b.thumb_key, b.preview_key, b.encrypted, "
         "b.size, b.mime, b.width, b.height, al.name AS album_name, al.path AS album_path, "
         "al.nsfw AS album_nsfw, al.box_id AS album_box_id, "
-        "bx.name AS box_name, abx.name AS album_box_name "
+        "bx.name AS box_name, abx.name AS album_box_name, "
+        "owner.display_name AS owner_display_name, owner.username AS owner_username, "
+        "owner.role AS owner_role "
         "FROM assets a JOIN blobs b ON b.id = a.blob_id "
         "LEFT JOIN albums al ON al.id = a.album_id "
         "LEFT JOIN boxes bx ON bx.id = a.box_id "
         "LEFT JOIN boxes abx ON abx.id = al.box_id "
+        "LEFT JOIN users owner ON owner.id = a.owner_id "
     )
 
 
