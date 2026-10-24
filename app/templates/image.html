@@ -36,6 +36,7 @@
     <div class="detail-toolbar">
       <a class="button" href="{{ download_url(asset.id) }}">{{ t('image.download') }} <span class="muted-inline">{{ asset.size|filesize }}</span></a>
       <a class="button ghost" href="{{ view_url(asset.id) }}" target="_blank" rel="noopener">{{ t('image.view_original') }}</a>
+      {% if can_edit_asset %}<a class="button ghost" href="{{ asset_edit_url }}">图片设置</a>{% endif %}
       <span class="muted">{{ asset.width }}×{{ asset.height }} · {{ asset.mime }}</span>
     </div>
     {% if engagement_enabled %}

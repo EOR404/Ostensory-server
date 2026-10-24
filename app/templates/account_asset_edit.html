@@ -1,0 +1,136 @@
+{% extends "base.html" %}
+{% block body_class %} page-account{% endblock %}
+{% block title %}图片设置 · {{ settings.site_name }}{% endblock %}
+{% block content %}
+<nav class="breadcrumb">
+  <a href="/account">我的账户</a><span>/</span>
+  <a href="/images/{{ asset.id }}">{{ asset.title or asset.original_name }}</a><span>/</span>
+  <span>图片设置</span>
+</nav>
+
+<section class="page-heading account-heading">
+  <div>
+    <p class="eyebrow">ASSET SETTINGS #{{ asset.id }}</p>
+    <h1>{{ asset.title or asset.original_name }}</h1>
+    <p class="muted">{{ asset.original_name }}</p>
+  </div>
+  <div class="inline-actions">
+    <a class="button ghost" href="/images/{{ asset.id }}">前台查看</a>
+    <a class="button ghost" href="/download/{{ asset.id }}">下载原图</a>
+    <form method="post" action="/account/assets/{{ asset.id }}/delete" onsubmit="return confirm('把这张图片移入回收站？');">
+      <input type="hidden" name="csrf" value="{{ csrf_token }}">
+      <button class="button danger" type="submit">删除图片</button>
+    </form>
+  </div>
+</section>
+
+<div class="asset-settings-grid">
+  <section class="settings-card">
+    <div class="panel-head"><h2>预览</h2><span class="mini-tag">{{ asset.mime }}</span></div>
+    <img class="settings-preview" src="{{ media_url(asset.id, 'preview', asset.sha256 if settings.preview_enabled == '1' else 'o' ~ asset.sha256) }}" alt="">
+    <dl class="kv">
+      <div><dt>尺寸</dt><dd>{{ asset.width }}×{{ asset.height }}</dd></div>
+      <div><dt>大小</dt><dd>{{ asset.size|filesize }}</dd></div>
+      <div><dt>原始文件名</dt><dd class="break">{{ asset.original_name }}</dd></div>
+      <div><dt>SHA-256</dt><dd><code class="break">{{ asset.sha256 }}</code></dd></div>
+      <div><dt>当前相册</dt><dd>{{ asset.album_name or '未分类' }}</dd></div>
+      <div><dt>当前匣子</dt><dd>{{ asset.box_name or '未分组' }}</dd></div>
+      <div><dt>上传时间</dt><dd>{{ asset.created_at|datetime }}</dd></div>
+      <div><dt>状态</dt><dd>{% if asset.status == 'pending' %}待审核{% elif asset.status == 'rejected' %}未通过{% else %}已发布{% endif %}{% if asset.visibility == 'private' %} · 仅自己{% endif %}{% if asset.nsfw %} · NSFW{% endif %}</dd></div>
+    </dl>
+    {% if metadata.positive_prompt is string and metadata.positive_prompt %}
+    <p class="muted small">正向提示词：</p>
+    <pre class="prompt-box small">{{ metadata.positive_prompt[:500] }}</pre>
+    {% endif %}
+    <p class="muted small">原图、原始文件名、SHA-256、上传时间、所有者、审核状态和元数据解析只能由管理员修改。</p>
+  </section>
+
+  <section class="settings-card">
+    <div class="panel-head"><h2>可修改内容</h2><span class="muted small">保存后立即生效</span></div>
+    <form method="post" action="/account/assets/{{ asset.id }}/edit" class="stack-form">
+      <input type="hidden" name="csrf" value="{{ csrf_token }}">
+
+      <label>作品名称（前台显示，可与文件名不同）
+        <input name="title" value="{{ asset.title }}" maxlength="300" placeholder="{{ asset.original_name }}">
+      </label>
+
+      <label>简介（纯文本）
+        <textarea name="description" rows="6" maxlength="5000">{{ asset.description }}</textarea>
+      </label>
+      <p class="muted small">普通用户只能写纯文本；保存时会关闭 HTML 原样渲染，避免在公开页面执行不信任的代码。管理员仍可在后台启用 HTML/CSS。</p>
+
+      <fieldset class="settings-fieldset">
+        <legend>简介样式</legend>
+        <div class="two-col">
+          <label>字号（10–72 px）
+            <input type="number" name="intro_font_size" min="10" max="72" value="{{ asset.intro_font_size or 15 }}">
+          </label>
+          <label>字体样式
+            <select name="intro_font_style">
+              <option value="italic" {% if asset.intro_font_style == 'italic' %}selected{% endif %}>斜体（默认）</option>
+              <option value="normal" {% if asset.intro_font_style == 'normal' %}selected{% endif %}>正常</option>
+              <option value="bold" {% if asset.intro_font_style == 'bold' %}selected{% endif %}>粗体</option>
+              <option value="italic_bold" {% if asset.intro_font_style == 'italic_bold' %}selected{% endif %}>斜体加粗</option>
+            </select>
+          </label>
+        </div>
+        <div class="two-col">
+          <label>颜色（留空跟随主题；支持 #hex、rgb()、hsl() 或颜色名）
+            <input name="intro_color" maxlength="40" value="{{ asset.intro_color }}" placeholder="#d7a76c">
+          </label>
+          <label class="check"><input type="checkbox" name="intro_quote" value="1" {% if asset.intro_quote %}checked{% endif %}> 用引号括起（默认）</label>
+        </div>
+        {% if asset.description %}
+        <p class="muted small">当前简介预览：</p>
+        <div class="detail-intro{% if asset.intro_quote %} has-quote{% endif %}" style="{{ intro_style(asset) }}">{{ asset.description }}</div>
+        {% endif %}
+      </fieldset>
+
+      <label>相册
+        <select name="album_id">
+          <option value="">未分类</option>
+          {% for album in albums %}<option value="{{ album.id }}" {% if asset.album_id == album.id %}selected{% endif %}>{{ '— ' * album.depth }}{{ album.name }}</option>{% endfor %}
+        </select>
+      </label>
+      <p class="muted small">有独立密码或地区限制的相册，需要先在站点里解锁并确认可访问；不能把图片移入自己打不开的相册。</p>
+
+      <label>可见性
+        <select name="visibility">
+          <option value="public" {% if asset.visibility != 'private' %}selected{% endif %}>公开</option>
+          <option value="private" {% if asset.visibility == 'private' %}selected{% endif %}>仅自己</option>
+        </select>
+      </label>
+
+      <label class="check"><input type="checkbox" name="nsfw" value="1" {% if asset.nsfw %}checked{% endif %}> NSFW（访客默认模糊）</label>
+
+      {% if settings.experimental_features == '1' %}
+      <fieldset class="settings-fieldset">
+        <legend>地区规则</legend>
+        <div class="two-col">
+          <label>规则
+            <select name="region_mode">
+              <option value="inherit" {% if asset.region_mode == 'inherit' %}selected{% endif %}>继承相册</option>
+              <option value="block" {% if asset.region_mode == 'block' %}selected{% endif %}>屏蔽下列国家</option>
+              <option value="allow" {% if asset.region_mode == 'allow' %}selected{% endif %}>仅允许下列国家</option>
+            </select>
+          </label>
+          <label>国家代码<input name="region_countries" value="{{ asset.region_countries|country_list }}" placeholder="CN, US"></label>
+        </div>
+      </fieldset>
+      {% endif %}
+
+      <fieldset class="settings-fieldset">
+        <legend>访问密码</legend>
+        <p class="muted small">{% if asset.access_password_hash %}已设置独立密码；留空保持不变。{% else %}未设置独立密码，可继承相册密码。{% endif %}</p>
+        <div class="two-col">
+          <label>新密码<input type="password" name="password" maxlength="200" autocomplete="new-password" placeholder="留空不修改"></label>
+          <label class="check"><input type="checkbox" name="clear_password" value="1"> 清除密码</label>
+        </div>
+      </fieldset>
+
+      <p class="muted small">落盘加密、元数据重新解析、匣子管理、彻底删除和 HTML/CSS 简介属于高资源或高风险操作，只允许管理员在后台执行。</p>
+      <button class="button" type="submit">保存图片设置</button>
+    </form>
+  </section>
+</div>
+{% endblock %}

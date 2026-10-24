@@ -58,8 +58,18 @@ jobs:
           case "$VERSION" in
             *dev*|*alpha*|*beta*|*rc*|*pre*) PRERELEASE="--prerelease" ;;
           esac
-          gh release create "${GITHUB_REF_NAME}" \
-            ostensory-server.tar.gz SHA256SUMS.txt \
-            --title "Ostensory Server ${GITHUB_REF_NAME}" \
-            --generate-notes \
-            $PRERELEASE
+          if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
+            # Re-publishing the same version must replace the assets instead
+            # of failing just because the Release row already exists.
+            gh release upload "${GITHUB_REF_NAME}" \
+              ostensory-server.tar.gz SHA256SUMS.txt --clobber
+            gh release edit "${GITHUB_REF_NAME}" \
+              --title "Ostensory Server ${GITHUB_REF_NAME}" \
+              --notes "Republished ${GITHUB_REF_NAME} from commit ${GITHUB_SHA}."
+          else
+            gh release create "${GITHUB_REF_NAME}" \
+              ostensory-server.tar.gz SHA256SUMS.txt \
+              --title "Ostensory Server ${GITHUB_REF_NAME}" \
+              --generate-notes \
+              $PRERELEASE
+          fi

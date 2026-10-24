@@ -90,6 +90,7 @@ from .users import user_display_name
 from .storage import Storage, StorageError, StorageFull
 from .users import asset_author_name, author_user_id
 from .web import (
+    admin_url,
     asset_url,
     flash_redirect,
     media_url,
@@ -1516,6 +1517,18 @@ def image_detail(
     related = _decorate_assets(request, db, config, geo, related_rows, False)[:8]
     effective = asset_effective(db, asset)
     viewer = current_user(db, request)
+    is_owner = bool(
+        viewer
+        and asset["owner_id"]
+        and int(asset["owner_id"]) == int(viewer["id"])
+    )
+    is_viewer_admin = bool(viewer and viewer["role"] == "admin")
+    can_edit_asset = bool(viewer and (is_owner or is_viewer_admin))
+    asset_edit_url = (
+        admin_url(request, f"/assets/{asset_id}")
+        if is_viewer_admin
+        else f"/account/assets/{asset_id}/edit"
+    )
     actor_key, visitor_cookie = actor_key_for_request(request, db, config, viewer)
     engage_on = engagement_enabled(db)
     view_added = record_view(db, asset_id, actor_key) if engage_on else False
@@ -1544,6 +1557,8 @@ def image_detail(
             "box": dict(box_row) if box_row else None,
             "related": related,
             "gallery_source": gallery_source,
+            "can_edit_asset": can_edit_asset,
+            "asset_edit_url": asset_edit_url,
             "prev_asset": dict(prev_row) if prev_row else None,
             "next_asset": dict(next_row) if next_row else None,
             "detail_position": int(position_row["n"]) if position_row else 1,

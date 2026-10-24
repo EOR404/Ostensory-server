@@ -13,9 +13,14 @@ from urllib.request import Request as UrlRequest, urlopen
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import RedirectResponse
 
-from .access import asset_query, check_album
+from .access import (
+    asset_query,
+    check_album,
+    countries_json,
+    validate_region_mode,
+)
 from .config import Config
-from .database import audit, utc_now
+from .database import audit, get_setting, utc_now
 from .deps import get_config, get_db_conn, get_geo, get_storage, require_csrf
 from .geo import GeoResolver
 from .guest_upload import album_choices
@@ -31,6 +36,7 @@ from .security import (
     delete_session,
     hash_password,
     login_retry_after,
+    password_warning,
     register_login_failure,
     set_session_cookie,
     verify_password,
@@ -38,7 +44,17 @@ from .security import (
 from .services import delete_asset
 from .storage import Storage
 from .users import USERNAME_RE, user_display_name
-from .web import flash_redirect, redirect, render, safe_next, site_settings
+from .web import (
+    INTRO_COLOR_RE,
+    INTRO_STYLE_MAP,
+    admin_url,
+    flash_redirect,
+    parse_int,
+    redirect,
+    render,
+    safe_next,
+    site_settings,
+)
 
 router = APIRouter()
 
@@ -594,6 +610,180 @@ def account_save(
     audit(db, "user.account_update", actor=user["username"], target=str(user["id"]))
     db.commit()
     return flash_redirect("/account", "账户资料已更新。")
+
+
+def _owned_asset(
+    db: sqlite3.Connection, user: sqlite3.Row, asset_id: int
+) -> sqlite3.Row | None:
+    asset = db.execute(asset_query() + "WHERE a.id = ?", (asset_id,)).fetchone()
+    if not asset or asset["deleted_at"]:
+        return None
+    if int(asset["owner_id"] or 0) != int(user["id"]):
+        return None
+    return asset
+
+
+@router.get("/account/assets/{asset_id}/edit")
+def account_asset_edit_page(
+    asset_id: int,
+    request: Request,
+    db: sqlite3.Connection = Depends(get_db_conn),
+    config: Config = Depends(get_config),
+):
+    user = current_user(db, request)
+    edit_path = f"/account/assets/{asset_id}/edit"
+    if not user:
+        return redirect("/login?next=" + quote(edit_path))
+    asset = db.execute(asset_query() + "WHERE a.id = ?", (asset_id,)).fetchone()
+    if not asset or asset["deleted_at"]:
+        raise HTTPException(status_code=404, detail="图片不存在")
+    # Administrators use the unrestricted admin editor, even for assets they
+    # own.  The personal editor intentionally exposes a smaller field set.
+    if user["role"] == "admin":
+        return redirect(admin_url(request, f"/assets/{asset_id}"))
+    if int(asset["owner_id"] or 0) != int(user["id"]):
+        raise HTTPException(status_code=404, detail="图片不存在")
+    try:
+        metadata = json.loads(asset["metadata_json"] or "{}")
+    except ValueError:
+        metadata = {}
+    return render(
+        request,
+        db,
+        "account_asset_edit.html",
+        {
+            "asset": asset,
+            "metadata": metadata,
+            "albums": album_choices(db),
+            "page_title": "图片设置",
+        },
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@router.post("/account/assets/{asset_id}/edit")
+def account_asset_edit_submit(
+    asset_id: int,
+    request: Request,
+    title: str = Form(""),
+    description: str = Form(""),
+    intro_font_size: str = Form("15"),
+    intro_font_style: str = Form("italic"),
+    intro_quote: str = Form(""),
+    intro_color: str = Form(""),
+    album_id: str = Form(""),
+    visibility: str = Form("public"),
+    nsfw: str = Form(""),
+    region_mode: str = Form("inherit"),
+    region_countries: str = Form(""),
+    password: str = Form(""),
+    clear_password: str = Form(""),
+    csrf: str = Form(""),
+    db: sqlite3.Connection = Depends(get_db_conn),
+    config: Config = Depends(get_config),
+    geo: GeoResolver = Depends(get_geo),
+):
+    require_csrf(request, csrf, config)
+    user = current_user(db, request)
+    edit_path = f"/account/assets/{asset_id}/edit"
+    if not user:
+        return redirect("/login?next=" + quote(edit_path))
+    if user["role"] == "admin":
+        if db.execute(
+            "SELECT 1 FROM assets WHERE id = ? AND deleted_at IS NULL", (asset_id,)
+        ).fetchone():
+            return redirect(admin_url(request, f"/assets/{asset_id}"))
+        raise HTTPException(status_code=404, detail="图片不存在")
+    asset = _owned_asset(db, user, asset_id)
+    if not asset:
+        raise HTTPException(status_code=404, detail="图片不存在")
+
+    new_album_id = int(album_id) if album_id.strip().isdigit() else None
+    new_album = None
+    if new_album_id is not None:
+        new_album = db.execute(
+            "SELECT * FROM albums WHERE id = ?", (new_album_id,)
+        ).fetchone()
+        if not new_album:
+            return flash_redirect(edit_path, "目标相册不存在。")
+        target_access = check_album(
+            request,
+            db,
+            config,
+            geo,
+            new_album_id,
+            admin=user["role"] == "admin",
+        )
+        if target_access.locked:
+            return flash_redirect(
+                edit_path, "目标相册需要密码，请先打开该相册并解锁后再移动。"
+            )
+        if not target_access.allowed:
+            return flash_redirect(edit_path, "目标相册当前受限，无法移入。")
+
+    if visibility not in {"public", "private"}:
+        visibility = "public"
+    intro_size = parse_int(intro_font_size, 15, 10, 72)
+    intro_style = intro_font_style if intro_font_style in INTRO_STYLE_MAP else "italic"
+    intro_color_value = intro_color.strip()[:40]
+    color_invalid = bool(intro_color_value) and not INTRO_COLOR_RE.fullmatch(
+        intro_color_value
+    )
+    if color_invalid:
+        intro_color_value = ""
+    password_hash = asset["access_password_hash"]
+    password_note = None
+    if clear_password == "1":
+        password_hash = None
+    elif password:
+        if len(password) > 200:
+            return flash_redirect(edit_path, "访问密码过长。")
+        password_note = password_warning(password)
+        password_hash = hash_password(password)
+    experimental = get_setting(db, "experimental_features", "0") == "1"
+    if not experimental:
+        # Do not silently wipe an administrator-configured region when the
+        # experimental UI is hidden; only the exposed fields are user-editable.
+        region_mode = asset["region_mode"]
+        region_countries = asset["region_countries"]
+    db.execute(
+        "UPDATE assets SET title = ?, description = ?, intro_font_size = ?, "
+        "intro_font_style = ?, intro_quote = ?, intro_color = ?, "
+        "intro_allow_html = 0, album_id = ?, box_id = ?, visibility = ?, "
+        "nsfw = ?, access_password_hash = ?, region_mode = ?, "
+        "region_countries = ?, updated_at = ? WHERE id = ?",
+        (
+            title.strip()[:300] or (asset["original_name"] or "")[:300],
+            description.strip()[:5000],
+            str(intro_size),
+            intro_style,
+            1 if intro_quote == "1" else 0,
+            intro_color_value,
+            new_album_id,
+            int(new_album["box_id"]) if new_album and new_album["box_id"] else None,
+            visibility,
+            1 if nsfw == "1" else 0,
+            password_hash,
+            validate_region_mode(region_mode),
+            countries_json(region_countries),
+            utc_now(),
+            asset_id,
+        ),
+    )
+    audit(
+        db,
+        "user.asset_update",
+        actor=user["username"],
+        target=str(asset_id),
+        detail=f"album={new_album_id} visibility={visibility} nsfw={nsfw}",
+    )
+    db.commit()
+    message = "图片设置已保存。"
+    if password_note:
+        message += " " + password_note
+    if color_invalid:
+        message += " 简介颜色格式无效，已改为跟随主题颜色。"
+    return flash_redirect(edit_path, message)
 
 
 @router.post("/account/assets/{asset_id}")

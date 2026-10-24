@@ -46,7 +46,10 @@
         <div class="account-work-body">
           <div class="account-work-head">
             <a href="/images/{{ asset.id }}">{{ asset.title or asset.original_name }}</a>
-            <span class="status-pill status-{{ asset.status }}">{% if asset.status == 'pending' %}待审核{% elif asset.status == 'rejected' %}未通过{% else %}已发布{% endif %}</span>
+            <span class="account-work-tools">
+              <a class="text-link" href="/account/assets/{{ asset.id }}/edit">图片设置</a>
+              <span class="status-pill status-{{ asset.status }}">{% if asset.status == 'pending' %}待审核{% elif asset.status == 'rejected' %}未通过{% else %}已发布{% endif %}</span>
+            </span>
           </div>
           <p class="muted small">{{ asset.views }} 次浏览 · {{ asset.author_name }}</p>
           {% if asset.review_note %}<p class="muted small">审核备注：{{ asset.review_note }}</p>{% endif %}
