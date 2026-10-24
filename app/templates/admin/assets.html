@@ -2,12 +2,12 @@
 {% block title %}图片 · 管理后台{% endblock %}
 {% block content %}
 <div class="page-title">
-  <div><p class="eyebrow">LIBRARY</p><h1>图片</h1><p class="muted">共 {{ total }} 张{% if deleted_filter == '1' %}（回收站）{% endif %}</p></div>
+  <div><p class="eyebrow">LIBRARY</p><h1>图片</h1><p class="muted">共 {{ total }} 张{% if deleted_filter == '1' %}（回收站）{% endif %}{% if deleted_filter != '1' %} · <a href="{{ admin_url('/trash') }}">打开回收站页</a>{% endif %}</p></div>
 </div>
 
 <section class="panel">
   <div class="panel-head"><h2>上传</h2><span class="muted small">支持 PNG / JPEG / WEBP / GIF，可多选</span></div>
-  <form method="post" action="{{ admin_url('/upload') }}" enctype="multipart/form-data" class="upload-form" data-upload-form data-name-check-url="{{ admin_url('/duplicates/album-names') }}">
+  <form method="post" action="{{ admin_url('/upload') }}" enctype="multipart/form-data" class="upload-form" data-upload-form data-name-check-url="{{ admin_url('/duplicates/album-names') }}" data-capacity-url="{{ admin_url('/storage/capacity') }}" data-trash-url="{{ admin_url('/trash') }}" data-reclaim-url="{{ admin_url('/trash/reclaim') }}" data-csrf="{{ csrf_token }}">
     <input type="hidden" name="csrf" value="{{ csrf_token }}">
     <div class="candidate-panel" data-candidate-panel aria-live="polite">
       <div class="candidate-head">
@@ -96,6 +96,30 @@
           <button class="button ghost" type="button" data-upload-conflict-cancel>取消</button>
           <button class="button ghost" type="button" data-upload-conflict-others>只上传其他图片</button>
           <button class="button" type="button" data-upload-conflict-all>仍然上传</button>
+        </div>
+      </div>
+    </div>
+  </dialog>
+  <dialog class="dedup-dialog storage-full-dialog" data-storage-full-dialog>
+    <div class="dedup-shell">
+      <div class="dedup-head">
+        <div>
+          <p class="eyebrow">STORAGE FULL</p>
+          <h2>存储空间不足</h2>
+          <p class="muted small">当前所有可用存储方式都已停用、满载或达到使用率阈值，这批图片无法写入。</p>
+        </div>
+        <button class="icon-button" type="button" data-storage-full-cancel aria-label="关闭">×</button>
+      </div>
+      <div style="padding:16px 22px">
+        <p class="muted small" data-storage-full-summary></p>
+        <p class="muted small">可以先去回收站手动挑选要永久删除的图片，也可以让系统按“最久未处理”的顺序自动永久删除回收站图片，然后重新上传。</p>
+      </div>
+      <div class="dedup-foot">
+        <span class="muted small">永久删除不可恢复。</span>
+        <div class="inline-actions">
+          <button class="button ghost" type="button" data-storage-full-cancel>取消</button>
+          <a class="button ghost" href="{{ admin_url('/trash') }}" data-storage-full-manual>去回收站手动删除</a>
+          <button class="button" type="button" data-storage-full-auto>自动清理回收站并重试</button>
         </div>
       </div>
     </div>

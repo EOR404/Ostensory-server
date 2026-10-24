@@ -390,6 +390,8 @@ html[data-theme="light"] .box-cover { background: linear-gradient(140deg, #ece4d
 .footer-custom { color: var(--muted); }
 .footer-custom a { color: var(--accent); }
 .footer-powered { color: var(--dim); white-space: nowrap; }
+.footer-powered a { color: inherit; text-decoration: none; border-bottom: 1px solid transparent; }
+.footer-powered a:hover { color: var(--accent); border-bottom-color: currentColor; }
 .brand-icon { width: 25px; height: 25px; object-fit: contain; border-radius: 5px; }
 /* The bottom haze belongs to the infinite waterfall only.  Detail, album
    index, about and paginated pages keep a clean, fixed bottom edge. */

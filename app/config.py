@@ -6,7 +6,7 @@ import secrets
 from dataclasses import dataclass, field
 from pathlib import Path
 
-APP_VERSION = "1.0.0"
+APP_VERSION = "0.0.1dev"
 
 
 def _read_or_create_key(path: Path, nbytes: int = 32) -> bytes:

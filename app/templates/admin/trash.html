@@ -1,0 +1,105 @@
+{% extends "admin/base_admin.html" %}
+{% block title %}回收站 · 管理后台{% endblock %}
+{% block content %}
+<div class="page-title">
+  <div>
+    <p class="eyebrow">RECYCLE BIN</p>
+    <h1>回收站</h1>
+    <p class="muted">这里的图片已经从前台隐藏，但原图、缩略图仍占用存储空间。永久删除后才会真正释放。</p>
+  </div>
+  <a class="button ghost" href="{{ admin_url('/assets') }}">返回图片</a>
+</div>
+
+<div class="stat-grid">
+  <div class="stat-card"><span>回收站图片</span><strong>{{ trash_stats.count }}</strong></div>
+  <div class="stat-card"><span>图片总大小</span><strong>{{ trash_stats.bytes|filesize }}</strong></div>
+  <div class="stat-card"><span>可释放空间</span><strong>{{ trash_stats.reclaimable_bytes|filesize }}</strong></div>
+  <div class="stat-card"><span>自动删除</span><strong>{% if retention_days %} {{ retention_days }} 天{% else %}永不{% endif %}</strong></div>
+</div>
+
+<section class="panel trash-settings-panel">
+  <div class="panel-head">
+    <div>
+      <h2>自动永久删除</h2>
+      <p class="muted small">每张图片从移入回收站的时间单独计时，不是按批次或全站统一计时。</p>
+    </div>
+    <span class="mini-tag">{{ '已开启' if retention_days else '默认关闭' }}</span>
+  </div>
+  <form method="post" action="{{ admin_url('/trash/settings') }}" class="trash-settings-form">
+    <input type="hidden" name="csrf" value="{{ csrf_token }}">
+    <label>保留天数
+      <input type="number" name="days" min="0" max="36500" step="1" value="{{ retention_days }}" inputmode="numeric">
+    </label>
+    <button class="button" type="submit">保存自动删除设置</button>
+    <p class="muted small">填 <strong>0</strong> 表示永不自动删除（默认）。例如填 30，图片进入回收站 30 天后会在后台清理任务或下一次访问时永久删除。</p>
+  </form>
+</section>
+
+<section class="panel">
+  <div class="panel-head">
+    <div>
+      <h2>回收站图片</h2>
+      <p class="muted small">共 {{ total }} 张；勾选后永久删除，删除后无法恢复。</p>
+    </div>
+    <a class="muted small" href="{{ admin_url('/assets?deleted=1') }}">用图片列表筛选 →</a>
+  </div>
+
+  {% if assets %}
+  <form id="trash-bulk-form" method="post" action="{{ admin_url('/trash/purge') }}" data-confirm="永久删除选中的回收站图片？删除后原图和缩略图都会被移除，无法恢复。">
+    <input type="hidden" name="csrf" value="{{ csrf_token }}">
+    <input type="hidden" name="next" value="{{ request.url.path }}{% if request.url.query %}?{{ request.url.query }}{% endif %}">
+    <div class="bulk-bar">
+      <label class="check"><input type="checkbox" data-bulk-all data-bulk-group="trash"> 全选本页</label>
+      <span data-bulk-count data-bulk-group="trash">已选 0 项</span>
+      <button class="button danger" type="submit" data-bulk-submit data-bulk-group="trash" disabled>永久删除选中</button>
+      <button class="button ghost danger-text" type="submit" name="all" value="1" data-confirm="清空回收站？所有回收站图片都会被永久删除，无法恢复。">清空回收站</button>
+    </div>
+  </form>
+  <div class="table-wrap">
+    <table class="table asset-table trash-table">
+      <thead><tr><th class="select-col"><input type="checkbox" data-bulk-all data-bulk-group="trash" aria-label="全选本页回收站图片"></th><th>图片</th><th>名称</th><th>相册</th><th>删除时间</th><th>自动删除</th><th>大小</th><th></th></tr></thead>
+      <tbody>
+        {% for asset in assets %}
+        {% set expiry = expiry_map.get(asset.id) %}
+        <tr>
+          <td class="select-col"><input type="checkbox" name="asset_ids" value="{{ asset.id }}" form="trash-bulk-form" data-bulk-item data-bulk-group="trash" aria-label="选择回收站图片 #{{ asset.id }}"></td>
+          <td><img class="trash-thumb" src="{{ media_url(asset.id, 'thumb', asset.sha256) }}" alt="" loading="lazy"></td>
+          <td><strong>{{ asset.title or asset.original_name }}</strong><div class="muted small">#{{ asset.id }} · {{ asset.original_name }}</div></td>
+          <td>{{ asset.album_name or '未分类' }}</td>
+          <td class="nowrap">{{ asset.deleted_at|datetime }}</td>
+          <td class="nowrap">
+            {% if expiry %}
+              {% if expiry.expired %}
+              <span class="mini-tag danger">等待清理</span>
+              {% else %}
+              <span class="trash-countdown">剩余 {{ expiry.days_left }} 天</span>
+              <div class="muted small">{{ expiry.expires_at|datetime }}</div>
+              {% endif %}
+            {% else %}
+            <span class="muted">永不自动删除</span>
+            {% endif %}
+          </td>
+          <td class="nowrap">{{ asset.size|filesize }}</td>
+          <td class="nowrap actions">
+            <button class="link-button danger-text" type="submit" form="trash-bulk-form" name="only" value="{{ asset.id }}" data-confirm="永久删除这张图片？此操作不可恢复。">永久删除</button>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% if pages > 1 %}
+  <nav class="pagination">
+    {% if page > 1 %}<a class="button ghost" href="{{ request.url.include_query_params(page=page-1) }}">上一页</a>{% endif %}
+    <span>第 {{ page }} / {{ pages }} 页</span>
+    {% if page < pages %}<a class="button ghost" href="{{ request.url.include_query_params(page=page+1) }}">下一页</a>{% endif %}
+  </nav>
+  {% endif %}
+  {% else %}
+  <div class="empty-state">
+    <p>回收站是空的。</p>
+    <p class="muted small">在图片列表删除图片后，会先进入这里；永久删除后才会释放存储空间。</p>
+  </div>
+  {% endif %}
+</section>
+{% endblock %}

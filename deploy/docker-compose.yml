@@ -3,7 +3,7 @@ services:
     build:
       context: ..
       dockerfile: deploy/Dockerfile
-    image: ostensory:1.0.0
+    image: ostensory:0.0.1dev
     container_name: ostensory
     restart: unless-stopped
     ports:

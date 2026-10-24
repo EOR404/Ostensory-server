@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import sqlite3
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
@@ -22,6 +23,7 @@ from .routes_admin import router as admin_router
 from .routes_api import router as api_router
 from .routes_public import router as public_router
 from .storage import Storage
+from .trash import purge_expired
 from .web import (
     asset_url,
     download_url,
@@ -131,8 +133,33 @@ def create_app(config: Config | None = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        yield
-        app.state.geo.close()
+        def sweep_trash() -> None:
+            db = connect(config.db_path)
+            try:
+                purge_expired(db, app.state.storage)
+                db.commit()
+            finally:
+                db.close()
+
+        async def trash_janitor() -> None:
+            while True:
+                await asyncio.sleep(3600)
+                try:
+                    await asyncio.to_thread(sweep_trash)
+                except Exception:
+                    # A temporary database/remote-storage failure must not kill
+                    # the hourly cleanup loop.
+                    continue
+
+        await asyncio.to_thread(sweep_trash)
+        janitor = asyncio.create_task(trash_janitor())
+        try:
+            yield
+        finally:
+            janitor.cancel()
+            with suppress(asyncio.CancelledError):
+                await janitor
+            app.state.geo.close()
 
     app = FastAPI(
         title="Ostensory",

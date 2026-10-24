@@ -32,7 +32,8 @@ INSERT OR IGNORE INTO settings(key, value) VALUES
     ('home_mode', 'waterfall'),
     ('home_layout', 'masonry'),
     ('home_waterfall_source', 'latest'),
-    ('guest_upload_log_ip', '0');
+    ('guest_upload_log_ip', '0'),
+    ('trash_retention_days', '0');
 
 CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -158,6 +159,7 @@ CREATE TABLE IF NOT EXISTS assets (
 CREATE INDEX IF NOT EXISTS idx_assets_album ON assets(album_id, deleted_at, id DESC);
 CREATE INDEX IF NOT EXISTS idx_assets_created ON assets(deleted_at, id DESC);
 CREATE INDEX IF NOT EXISTS idx_assets_client_path ON assets(album_id, client_path);
+CREATE INDEX IF NOT EXISTS idx_assets_blob ON assets(blob_id);
 CREATE INDEX IF NOT EXISTS idx_assets_nsfw ON assets(nsfw);
 CREATE INDEX IF NOT EXISTS idx_blobs_sha ON blobs(sha256);
 CREATE INDEX IF NOT EXISTS idx_albums_parent ON albums(parent_id);

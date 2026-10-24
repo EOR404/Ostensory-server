@@ -297,6 +297,94 @@
     else dialog.removeAttribute("open");
   }
 
+  var storageFullDialog = document.querySelector("[data-storage-full-dialog]");
+  var storageFullSummary = storageFullDialog
+    ? storageFullDialog.querySelector("[data-storage-full-summary]")
+    : null;
+  var pendingUploadBytes = 0;
+
+  function showStorageFull(data, needed) {
+    pendingUploadBytes = Math.max(0, Number(needed) || 0);
+    var available = data && data.available_bytes === null
+      ? "不限"
+      : "约 " + humanSize((data && data.available_bytes) || 0);
+    var trash = (data && data.trash) || {};
+    if (storageFullSummary) {
+      storageFullSummary.textContent =
+        "本次需要约 " + humanSize(pendingUploadBytes) +
+        "，当前可用 " + available +
+        "；回收站有 " + (Number(trash.count) || 0) + " 张，可释放约 " +
+        humanSize(Number(trash.reclaimable_bytes) || 0) + "。";
+    }
+    if (!storageFullDialog) {
+      window.alert("存储空间不足。请先到回收站永久删除图片，或扩容存储。");
+      return;
+    }
+    openDialog(storageFullDialog);
+  }
+
+  function initStorageFullDialog() {
+    if (!storageFullDialog) return;
+    var cancelButtons = storageFullDialog.querySelectorAll("[data-storage-full-cancel]");
+    Array.prototype.forEach.call(cancelButtons, function (button) {
+      button.addEventListener("click", function () { closeDialog(storageFullDialog); });
+    });
+    storageFullDialog.addEventListener("click", function (event) {
+      if (event.target === storageFullDialog) closeDialog(storageFullDialog);
+    });
+    var auto = storageFullDialog.querySelector("[data-storage-full-auto]");
+    var manual = storageFullDialog.querySelector("[data-storage-full-manual]");
+    if (manual) {
+      manual.addEventListener("click", function () { closeDialog(storageFullDialog); });
+    }
+    if (!auto || !uploadForm || typeof fetch !== "function") return;
+    auto.addEventListener("click", function () {
+      var reclaimUrl = uploadForm.getAttribute("data-reclaim-url");
+      if (!reclaimUrl) return;
+      var original = auto.textContent;
+      auto.disabled = true;
+      auto.textContent = "正在清理…";
+      var body = new URLSearchParams();
+      body.set("csrf", uploadForm.getAttribute("data-csrf") || "");
+      body.set("need", String(pendingUploadBytes));
+      fetch(reclaimUrl, {
+        method: "POST",
+        headers: {
+          "Accept": "application/json",
+          "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8"
+        },
+        credentials: "same-origin",
+        body: body.toString()
+      })
+        .then(function (response) {
+          if (!response.ok) throw new Error("reclaim failed");
+          return response.json();
+        })
+        .then(function (result) {
+          if (result && result.ok) {
+            closeDialog(storageFullDialog);
+            requestUploadWithNameCheck();
+            return;
+          }
+          if (storageFullSummary) {
+            storageFullSummary.textContent = (result && result.message) ||
+              "回收站已清理，但仍没有足够的存储空间。";
+          }
+        })
+        .catch(function () {
+          if (storageFullSummary) {
+            storageFullSummary.textContent = "自动清理失败，请到回收站手动删除图片。";
+          }
+        })
+        .finally(function () {
+          auto.disabled = false;
+          auto.textContent = original;
+        });
+    });
+  }
+
+  initStorageFullDialog();
+
   function normalizedName(value) {
     return String(value || "").toLowerCase();
   }
@@ -331,12 +419,7 @@
     openDialog(conflictDialog);
   }
 
-  function requestUploadWithNameCheck() {
-    var chosen = selectedFiles();
-    if (!chosen.length) {
-      window.alert("请至少勾选一张要上传的图片。");
-      return;
-    }
+  function checkUploadNames(chosen) {
     var url = uploadNameUrl(albumSelect ? albumSelect.value : "");
     if (!url || typeof fetch !== "function") {
       submitUpload();
@@ -365,6 +448,45 @@
       })
       .finally(function () {
         if (confirmButton) confirmButton.disabled = selectedFiles().length === 0;
+      });
+  }
+
+  function requestUploadWithNameCheck() {
+    var chosen = selectedFiles();
+    if (!chosen.length) {
+      window.alert("请至少勾选一张要上传的图片。");
+      return;
+    }
+    var capacityUrl = uploadForm ? uploadForm.getAttribute("data-capacity-url") : "";
+    if (!capacityUrl || typeof fetch !== "function") {
+      checkUploadNames(chosen);
+      return;
+    }
+    var needed = chosen.reduce(function (sum, file) { return sum + (file.size || 0); }, 0);
+    if (confirmButton) confirmButton.disabled = true;
+    fetch(capacityUrl + "?bytes=" + encodeURIComponent(String(needed)), {
+      headers: { "Accept": "application/json" },
+      credentials: "same-origin"
+    })
+      .then(function (response) {
+        if (!response.ok) throw new Error("capacity check failed");
+        return response.json();
+      })
+      .then(function (data) {
+        if (data && data.ok === false) {
+          showStorageFull(data, needed);
+          return;
+        }
+        checkUploadNames(chosen);
+      })
+      .catch(function () {
+        // Capacity is a preflight convenience; the server still enforces it.
+        checkUploadNames(chosen);
+      })
+      .finally(function () {
+        if (confirmButton) {
+          confirmButton.disabled = selectedFiles().length === 0;
+        }
       });
   }
 
@@ -412,7 +534,8 @@
       window.alert("请至少勾选一张要上传的图片。");
       return;
     }
-    var message = form.getAttribute("data-confirm");
+    var message = (event.submitter && event.submitter.getAttribute("data-confirm")) ||
+      form.getAttribute("data-confirm");
     if (message && !window.confirm(message)) {
       event.preventDefault();
       return;

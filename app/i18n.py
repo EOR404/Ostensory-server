@@ -347,6 +347,8 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "about.browse_albums": "浏览相册",
         # Footer / assistant
         "footer.powered": "由 Ostensory 驱动",
+        "footer.powered_before": "由 ",
+        "footer.powered_after": " 驱动",
         "fab.back_top": "回到顶部",
         "fab.title": "回到顶部",
     },
@@ -683,6 +685,8 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "about.back_home": "Back home",
         "about.browse_albums": "Browse albums",
         "footer.powered": "Powered by Ostensory",
+        "footer.powered_before": "Powered by ",
+        "footer.powered_after": "",
         "fab.back_top": "Back to top",
         "fab.title": "Back to top",
     },

@@ -31,7 +31,7 @@ from .services import (
     create_asset_from_upload,
     safe_display_name,
 )
-from .storage import Storage, StorageError
+from .storage import Storage, StorageError, StorageFull
 
 router = APIRouter(prefix="/api/v1")
 SHA_RE = re.compile(r"^[a-fA-F0-9]{64}$")
@@ -207,6 +207,8 @@ def sync_upload(
             expected_sha256=expected or None,
             metadata=client_metadata,
         )
+    except StorageFull as exc:
+        raise HTTPException(status_code=507, detail=str(exc)) from exc
     except StorageError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except ValueError as exc:

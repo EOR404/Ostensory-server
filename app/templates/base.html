@@ -17,7 +17,7 @@
       }
     })();
   </script>
-  <link rel="stylesheet" href="/static/public.css?v=23">
+  <link rel="stylesheet" href="/static/public.css?v=24">
   <style>:root { --accent: {{ settings.accent_color or '#d7a76c' }}; }</style>
   {% if settings.custom_css %}<style>{{ settings.custom_css|safe }}</style>{% endif %}
   {% if settings.custom_head_html %}{{ settings.custom_head_html|safe }}{% endif %}
@@ -72,7 +72,7 @@
       {% if settings.footer_html %}<div class="footer-custom">{{ settings.footer_html|safe }}</div>{% endif %}
     </div>
     <div class="footer-right">
-      <span class="footer-powered">{{ t('footer.powered') }}</span>
+      <span class="footer-powered">{{ t('footer.powered_before') }}<a href="https://github.com/EOR404/Ostensory-server" target="_blank" rel="noopener noreferrer">Ostensory</a>{{ t('footer.powered_after') }}</span>
     </div>
   </footer>
   <button class="back-to-top" type="button" data-back-to-top aria-label="{{ t('fab.back_top') }}" title="{{ t('fab.title') }}">

@@ -37,6 +37,10 @@ class StorageError(Exception):
     pass
 
 
+class StorageFull(StorageError):
+    pass
+
+
 class UploadTooLarge(StorageError):
     pass
 
@@ -160,6 +164,63 @@ class Storage:
         ).fetchone()
         return int(row["n"] if row else 0)
 
+    def capacity_status(
+        self, db: sqlite3.Connection, incoming_size: int = 0
+    ) -> dict[str, Any]:
+        """Describe whether the enabled backends can accept more bytes.
+
+        The numbers are deliberately about this application's own blobs, not a
+        cloud account's total free space.  A quota of zero means unlimited.
+        """
+
+        wanted = max(0, min(2 * 1024 * 1024 * 1024, int(incoming_size or 0)))
+        rows = db.execute(
+            "SELECT * FROM storage_backends WHERE enabled = 1 ORDER BY priority, id"
+        ).fetchall()
+        backends: list[dict[str, Any]] = []
+        any_ok = False
+        unlimited = False
+        available_total = 0
+        for row in rows:
+            quota_mb = max(0, int(row["quota_mb"] or 0))
+            threshold = max(1, min(100, int(row["threshold_pct"] or 90)))
+            used = self.backend_usage(db, int(row["id"]))
+            if quota_mb == 0:
+                available = None
+                ok = True
+                unlimited = True
+            else:
+                quota = quota_mb * MB
+                limit = quota * threshold // 100
+                available = max(0, min(quota, limit) - used)
+                ok = used * 100 < quota * threshold and used + wanted <= quota
+                available_total += available
+            if ok:
+                any_ok = True
+            backends.append(
+                {
+                    "id": int(row["id"]),
+                    "kind": str(row["kind"]),
+                    "name": str(row["name"]),
+                    "used_bytes": used,
+                    "quota_bytes": quota_mb * MB,
+                    "threshold_pct": threshold,
+                    "available_bytes": available,
+                    "ok": ok,
+                }
+            )
+        if unlimited:
+            available_total_value: int | None = None
+        else:
+            available_total_value = available_total
+        return {
+            "ok": any_ok,
+            "requested_bytes": wanted,
+            "available_bytes": available_total_value,
+            "backends": backends,
+            "reason": "ok" if any_ok else "full",
+        }
+
     def _candidate_backends(
         self, db: sqlite3.Connection | None, incoming_size: int
     ) -> list[sqlite3.Row]:
@@ -254,8 +315,8 @@ class Storage:
             candidates = self._candidate_backends(db, size)
             if not candidates:
                 if db is not None:
-                    raise StorageError(
-                        "没有可用的存储方式（可能全部停用、已满或达到使用率阈值）"
+                    raise StorageFull(
+                        "存储空间不足：所有可用的存储方式都已停用、满载或达到使用率阈值"
                     )
                 # No database context (CLI/tests): keep backwards-compatible
                 # local-only behavior.

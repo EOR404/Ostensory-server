@@ -6,7 +6,7 @@
   <title>{% block title %}管理后台 · {{ settings.site_name }}{% endblock %}</title>
   <meta name="robots" content="noindex,nofollow">
   <link rel="icon" href="/static/favicon.svg?v=1">
-  <link rel="stylesheet" href="/static/admin.css?v=20">
+  <link rel="stylesheet" href="/static/admin.css?v=21">
   <script>
     (function () {
       try {
@@ -27,6 +27,7 @@
       <a href="{{ admin_url('/') }}" class="{% if active == 'dashboard' %}active{% endif %}">概览</a>
       <a href="{{ admin_url('/duplicates') }}" class="{% if active == 'duplicates' %}active{% endif %}">重复检查</a>
       <a href="{{ admin_url('/assets') }}" class="{% if active == 'assets' %}active{% endif %}">图片</a>
+      <a href="{{ admin_url('/trash') }}" class="{% if active == 'trash' %}active{% endif %}">回收站</a>
       <a href="{{ admin_url('/boxes') }}" class="{% if active == 'boxes' %}active{% endif %}">匣子</a>
       <a href="{{ admin_url('/albums') }}" class="{% if active == 'albums' %}active{% endif %}">相册</a>
       <a href="{{ admin_url('/tokens') }}" class="{% if active == 'tokens' %}active{% endif %}">API Token</a>
@@ -70,8 +71,8 @@
       {% block content %}{% endblock %}
     </main>
   </div>
-  <script src="/static/admin.js?v=20" defer></script>
-  <script src="/static/admin-i18n.js?v=8" defer></script>
+  <script src="/static/admin.js?v=22" defer></script>
+  <script src="/static/admin-i18n.js?v=9" defer></script>
   {% block scripts %}{% endblock %}
 </body>
 </html>

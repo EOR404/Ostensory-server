@@ -69,7 +69,7 @@ from .security import (
     verify_view_token,
 )
 from .services import create_asset_from_upload, extract_workflow, safe_display_name
-from .storage import Storage, StorageError
+from .storage import Storage, StorageError, StorageFull
 from .web import (
     asset_url,
     flash_redirect,
@@ -1056,6 +1056,8 @@ async def guest_upload_submit(
             created += 1
             if status == "duplicate":
                 duplicates += 1
+        except StorageFull as exc:
+            errors.append(f"{safe_display_name(upload.filename or '')}: {exc}")
         except (StorageError, ValueError, OSError) as exc:
             errors.append(f"{safe_display_name(upload.filename or '')}: {exc}")
     if created and mode == "once":

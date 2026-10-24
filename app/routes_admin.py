@@ -69,8 +69,15 @@ from .services import (
     set_asset_encryption,
     set_box_encryption,
 )
-from .storage import Storage, StorageError
+from .storage import Storage, StorageError, StorageFull
 from .storage_backends import BackendError, build_backend
+from .trash import (
+    expiry_for,
+    purge_expired,
+    reclaim,
+    retention_days,
+    stats as trash_stats,
+)
 from .web import (
     CURSOR_URL_RE,
     INTRO_COLOR_RE,
@@ -660,6 +667,191 @@ def duplicates_album_names(
 
 
 # ---------------------------------------------------------------------------
+# Recycle bin
+# ---------------------------------------------------------------------------
+
+
+@router.get("/trash")
+def trash_page(
+    request: Request,
+    page: int = 1,
+    db: sqlite3.Connection = Depends(get_db_conn),
+    storage: Storage = Depends(get_storage),
+    admin: sqlite3.Row = Depends(require_admin),
+):
+    purge_expired(db, storage)
+    db.commit()
+    per_page = 40
+    page = max(1, page)
+    total = db.execute(
+        "SELECT COUNT(*) AS n FROM assets WHERE deleted_at IS NOT NULL"
+    ).fetchone()["n"]
+    rows = db.execute(
+        asset_query()
+        + "WHERE a.deleted_at IS NOT NULL "
+        "ORDER BY a.deleted_at DESC, a.id DESC LIMIT ? OFFSET ?",
+        (per_page, (page - 1) * per_page),
+    ).fetchall()
+    days = retention_days(db)
+    expiry_map = {
+        int(row["id"]): expiry_for(row["deleted_at"], days) for row in rows
+    }
+    return render(
+        request,
+        db,
+        "admin/trash.html",
+        _admin_ctx(
+            admin,
+            assets=rows,
+            expiry_map=expiry_map,
+            retention_days=days,
+            trash_stats=trash_stats(db),
+            total=total,
+            page=page,
+            pages=max(1, (total + per_page - 1) // per_page),
+            active="trash",
+        ),
+    )
+
+
+@router.post("/trash/settings")
+def trash_settings(
+    request: Request,
+    days: str = Form("0"),
+    csrf: str = Form(""),
+    db: sqlite3.Connection = Depends(get_db_conn),
+    config: Config = Depends(get_config),
+    storage: Storage = Depends(get_storage),
+    admin: sqlite3.Row = Depends(require_admin),
+):
+    require_csrf(request, csrf, config)
+    value = parse_int(days, 0, 0, 36500)
+    set_setting(db, "trash_retention_days", str(value))
+    audit(
+        db,
+        "trash.settings",
+        actor=admin["username"],
+        detail=f"days={value}",
+    )
+    db.commit()
+    purged = purge_expired(db, storage)
+    db.commit()
+    message = (
+        "回收站自动删除已关闭，图片会一直保留。"
+        if value == 0
+        else f"回收站图片会在移入 {value} 天后自动永久删除。"
+    )
+    if purged["deleted"]:
+        message += f" 同时清理了 {purged['deleted']} 张已过期图片。"
+    return flash_redirect(admin_url(request, "/trash"), message)
+
+
+@router.post("/trash/purge")
+def trash_purge(
+    request: Request,
+    asset_ids: list[str] = Form([]),
+    only: str = Form(""),
+    all: str = Form(""),
+    next: str = Form(""),
+    csrf: str = Form(""),
+    db: sqlite3.Connection = Depends(get_db_conn),
+    config: Config = Depends(get_config),
+    storage: Storage = Depends(get_storage),
+    admin: sqlite3.Row = Depends(require_admin),
+):
+    require_csrf(request, csrf, config)
+    destination = safe_next(next, admin_url(request, "/trash"))
+    ids: list[int] = []
+    if only.strip().isdigit() and int(only.strip()) > 0:
+        ids = [int(only.strip())]
+    else:
+        for value in asset_ids:
+            if str(value).strip().isdigit():
+                number = int(str(value).strip())
+                if number > 0 and number not in ids:
+                    ids.append(number)
+    if all == "1":
+        ids = [
+            int(row["id"])
+            for row in db.execute(
+                "SELECT id FROM assets WHERE deleted_at IS NOT NULL "
+                "ORDER BY deleted_at ASC, id ASC LIMIT 10000"
+            ).fetchall()
+        ]
+    if not ids:
+        return flash_redirect(destination, "没有选中回收站里的图片。")
+    deleted = 0
+    failed = 0
+    for asset_id in ids:
+        row = db.execute(
+            "SELECT id FROM assets WHERE id = ? AND deleted_at IS NOT NULL",
+            (asset_id,),
+        ).fetchone()
+        if not row:
+            continue
+        try:
+            delete_asset(db, storage, asset_id, purge=True)
+            db.commit()
+            deleted += 1
+        except Exception:
+            db.rollback()
+            failed += 1
+    audit(
+        db,
+        "trash.purge",
+        actor=admin["username"],
+        detail=f"deleted={deleted} failed={failed} ids={','.join(map(str, ids[:80]))}",
+        ip=getattr(request.state, "client_ip", ""),
+    )
+    db.commit()
+    message = f"已从回收站永久删除 {deleted} 张图片，释放对应存储空间。"
+    if failed:
+        message += f" 有 {failed} 张删除失败，请查看文件权限或远程存储连接。"
+    return flash_redirect(destination, message)
+
+
+@router.post("/trash/reclaim")
+def trash_reclaim(
+    request: Request,
+    need: int = Form(0),
+    csrf: str = Form(""),
+    db: sqlite3.Connection = Depends(get_db_conn),
+    config: Config = Depends(get_config),
+    storage: Storage = Depends(get_storage),
+    admin: sqlite3.Row = Depends(require_admin),
+):
+    require_csrf(request, csrf, config)
+    result = reclaim(db, storage, need)
+    db.commit()
+    audit(
+        db,
+        "trash.reclaim",
+        actor=admin["username"],
+        detail=(
+            f"deleted={result['deleted']} failed={result['failed']} "
+            f"freed_bytes={result['freed_bytes']} ok={result['ok']}"
+        ),
+        ip=getattr(request.state, "client_ip", ""),
+    )
+    db.commit()
+    result["trash"] = trash_stats(db)
+    if result["ok"]:
+        if result["deleted"]:
+            result["message"] = (
+                f"已自动永久删除 {result['deleted']} 张回收站图片，"
+                "现在可以重新上传。"
+            )
+        else:
+            result["message"] = "空间已经足够，可以重新上传。"
+    else:
+        result["message"] = (
+            "回收站已经清理，但仍没有足够的存储空间。"
+            "请手动删除图片、扩容存储，或启用另一种存储方式。"
+        )
+    return JSONResponse(result)
+
+
+# ---------------------------------------------------------------------------
 # Assets
 # ---------------------------------------------------------------------------
 
@@ -781,9 +973,12 @@ def upload_assets(
         target_box = _box(db, int(box_id.strip()))
         if not target_box:
             return flash_redirect(admin_url(request, "/assets"), "目标匣子不存在。")
+    purge_expired(db, storage)
+    db.commit()
     created = 0
     duplicates = 0
     errors: list[str] = []
+    storage_full = False
     if get_setting(db, "experimental_features", "0") != "1":
         region_mode = "inherit"
         region_countries = ""
@@ -808,6 +1003,10 @@ def upload_assets(
             created += 1
             if status == "duplicate":
                 duplicates += 1
+        except StorageFull as exc:
+            storage_full = True
+            errors.append(f"{upload.filename}: {exc}")
+            break
         except (StorageError, ValueError, OSError) as exc:
             errors.append(f"{upload.filename}: {exc}")
     audit(
@@ -824,7 +1023,10 @@ def upload_assets(
     if errors:
         message += "；失败：" + "；".join(errors[:3])
     db.commit()
-    return flash_redirect(admin_url(request, f"/assets?album_id={target_album['id']}"), message)
+    suffix = f"/assets?album_id={target_album['id']}"
+    if storage_full:
+        suffix += "&storage_full=1"
+    return flash_redirect(admin_url(request, suffix), message)
 
 
 @router.post("/assets/bulk-delete")
@@ -1870,6 +2072,21 @@ def storage_page(
             active="storage",
         ),
     )
+
+
+@router.get("/storage/capacity")
+def storage_capacity(
+    request: Request,
+    bytes: int = 0,
+    db: sqlite3.Connection = Depends(get_db_conn),
+    storage: Storage = Depends(get_storage),
+    admin: sqlite3.Row = Depends(require_admin),
+):
+    purge_expired(db, storage)
+    db.commit()
+    status = storage.capacity_status(db, parse_int(str(bytes), 0, 0, 2 * 1024 * 1024 * 1024))
+    status["trash"] = trash_stats(db)
+    return JSONResponse(status)
 
 
 @router.post("/storage/add")

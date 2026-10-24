@@ -300,6 +300,9 @@ def delete_asset(db: sqlite3.Connection, storage: Storage, asset_id: int, purge:
         return
     blob_id = asset["blob_id"]
     db.execute("DELETE FROM assets WHERE id = ?", (asset_id,))
+    # A permanently removed image must not leave a dangling cover reference.
+    db.execute("UPDATE albums SET cover_asset_id = NULL WHERE cover_asset_id = ?", (asset_id,))
+    db.execute("UPDATE boxes SET cover_asset_id = NULL WHERE cover_asset_id = ?", (asset_id,))
     refs = blob_ref_count(db, blob_id)
     if refs == 0:
         blob = db.execute("SELECT * FROM blobs WHERE id = ?", (blob_id,)).fetchone()
