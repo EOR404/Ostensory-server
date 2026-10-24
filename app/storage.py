@@ -171,10 +171,6 @@ class Storage:
                 "SELECT * FROM storage_backends WHERE enabled = 1 ORDER BY priority, id"
             ).fetchall()
         ]
-        if not rows:
-            rows = db.execute(
-                "SELECT * FROM storage_backends WHERE kind = 'local' ORDER BY id LIMIT 1"
-            ).fetchall()
         result: list[sqlite3.Row] = []
         for row in rows:
             quota_mb = max(0, int(row["quota_mb"] or 0))
@@ -259,7 +255,7 @@ class Storage:
             if not candidates:
                 if db is not None:
                     raise StorageError(
-                        "所有已启用的存储方式都已达到容量上限或使用率阈值"
+                        "没有可用的存储方式（可能全部停用、已满或达到使用率阈值）"
                     )
                 # No database context (CLI/tests): keep backwards-compatible
                 # local-only behavior.
