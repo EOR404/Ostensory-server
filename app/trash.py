@@ -126,6 +126,13 @@ def expire_rejected(db: sqlite3.Connection, storage: Storage) -> dict[str, int]:
     the data is not destroyed immediately: normal recycle-bin rules still
     apply, so an administrator can recover an image when retention is enabled.
     """
+    # Defence in depth for rows rejected before this rule existed (or imported
+    # from an older backup): public visibility must never make them reachable.
+    db.execute(
+        "UPDATE assets SET visibility = 'private' "
+        "WHERE status = 'rejected' AND deleted_at IS NULL AND visibility != 'private'"
+    )
+    db.commit()
     days = rejected_retention_days(db)
     cutoff = cutoff_for(days)
     if not cutoff:
