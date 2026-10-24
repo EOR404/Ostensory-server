@@ -4,10 +4,13 @@ import math
 import sqlite3
 from datetime import datetime, timedelta, timezone
 
+from .database import audit
 from .services import delete_asset
 from .storage import Storage
 
 RETENTION_KEY = "trash_retention_days"
+REJECTED_RETENTION_KEY = "rejected_retention_days"
+DEFAULT_REJECTED_RETENTION_DAYS = 7
 
 
 def _parse_datetime(value: str | None) -> datetime | None:
@@ -37,6 +40,22 @@ def retention_days(db: sqlite3.Connection) -> int:
         days = -1
     # -1 means keep forever; 0 means the recycle bin is disabled.
     return max(-1, min(36500, days))
+
+
+def rejected_retention_days(db: sqlite3.Connection) -> int:
+    """How long rejected images stay in the uploader's ``未过审`` page.
+
+    0 disables automatic expiry.  The cap mirrors the recycle-bin setting so a
+    typo cannot turn into an accidental mass purge.
+    """
+    row = db.execute(
+        "SELECT value FROM settings WHERE key = ?", (REJECTED_RETENTION_KEY,)
+    ).fetchone()
+    try:
+        days = int(row["value"] if row else DEFAULT_REJECTED_RETENTION_DAYS)
+    except (TypeError, ValueError):
+        days = DEFAULT_REJECTED_RETENTION_DAYS
+    return max(0, min(36500, days))
 
 
 def cutoff_for(days: int) -> str | None:
@@ -92,6 +111,44 @@ def purge_expired(db: sqlite3.Connection, storage: Storage) -> dict[str, int]:
     for row in rows:
         try:
             delete_asset(db, storage, int(row["id"]), purge=True)
+            db.commit()
+            deleted += 1
+        except Exception:
+            db.rollback()
+            failed += 1
+    return {"deleted": deleted, "failed": failed}
+
+
+def expire_rejected(db: sqlite3.Connection, storage: Storage) -> dict[str, int]:
+    """Move expired rejected images to the recycle bin.
+
+    The uploader stops seeing them after the configured retention period, but
+    the data is not destroyed immediately: normal recycle-bin rules still
+    apply, so an administrator can recover an image when retention is enabled.
+    """
+    days = rejected_retention_days(db)
+    cutoff = cutoff_for(days)
+    if not cutoff:
+        return {"deleted": 0, "failed": 0}
+    rows = db.execute(
+        "SELECT id FROM assets WHERE status = 'rejected' AND deleted_at IS NULL "
+        "AND datetime(COALESCE(reviewed_at, updated_at)) <= datetime(?) "
+        "ORDER BY COALESCE(reviewed_at, updated_at) ASC, id ASC LIMIT 5000",
+        (cutoff,),
+    ).fetchall()
+    deleted = 0
+    failed = 0
+    for row in rows:
+        asset_id = int(row["id"])
+        try:
+            delete_asset(db, storage, asset_id, purge=False)
+            audit(
+                db,
+                "asset.rejected_expired",
+                actor="system",
+                target=str(asset_id),
+                detail=f"retention_days={days}",
+            )
             db.commit()
             deleted += 1
         except Exception:

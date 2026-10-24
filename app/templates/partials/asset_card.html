@@ -1,6 +1,6 @@
 {% set asset = asset %}
 {% set gallery_source = gallery_source|default('all') %}
-<article class="asset-card{% if asset.nsfw_effective and settings.blur_nsfw %} is-nsfw{% endif %}" data-asset-id="{{ asset.id }}">
+<article class="asset-card{% if asset.nsfw_effective and settings.blur_nsfw %} is-nsfw{% endif %}{% if asset.pending %} is-pending{% endif %}" data-asset-id="{{ asset.id }}">
   <a class="asset-thumb{% if asset.locked %} locked{% endif %}" href="{{ asset_url(asset.id, gallery_source) }}">
     {% if asset.locked %}
       <span class="lock-glyph">🔒</span>
@@ -10,6 +10,7 @@
     {% endif %}
     {% if asset.nsfw_effective %}<span class="badge badge-nsfw">{{ t('common.nsfw') }}</span>{% endif %}
     {% if asset.encrypted %}<span class="badge badge-lock">{{ t('common.encrypted') }}</span>{% endif %}
+    {% if asset.pending %}<span class="badge badge-pending">{{ t('common.pending') }}</span>{% endif %}
   </a>
   {% if asset.nsfw_effective and not asset.locked and settings.blur_nsfw %}
   <button class="nsfw-cover" type="button" data-reveal-nsfw>
@@ -23,6 +24,7 @@
       <span>{{ asset.width }}×{{ asset.height }}</span>
       {% if asset.lora_count %}<span class="meta-lora">{{ asset.lora_count }} LoRA</span>{% endif %}
       {% if asset.metadata.kind == 'comfyui' %}<span class="dot-comfy">ComfyUI</span>{% endif %}
+      {% if asset.pending %}<span class="pending-note">{{ t('common.pending_owner_note') }}</span>{% endif %}
     </div>
     <div class="asset-actions">
       {% if not asset.locked %}<a href="{{ download_url(asset.id) }}" title="{{ t('common.download_original') }}">{{ t('common.download') }}</a>{% endif %}

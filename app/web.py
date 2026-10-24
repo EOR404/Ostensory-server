@@ -83,6 +83,7 @@ DEFAULT_SETTINGS: dict[str, str] = {
     "discord_client_secret": "",
     "user_upload_enabled": "0",
     "upload_require_review": "0",
+    "rejected_retention_days": "7",
     "preview_enabled": "1",
     "user_quota_mode": "fixed",
     "user_quota_default_mb": "1024",

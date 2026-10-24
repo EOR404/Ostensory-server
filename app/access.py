@@ -361,6 +361,29 @@ def album_counts(db: sqlite3.Connection, album_id: int) -> tuple[int, int]:
     return int(row["n"]), int(row["nsfw"])
 
 
+def visible_album_counts(
+    db: sqlite3.Connection, album_id: int, viewer_id: int | None = None
+) -> tuple[int, int]:
+    """Count images a particular visitor can actually open in an album.
+
+    Rejected images are never counted.  Anonymous visitors and other users see
+    approved public images only; the uploader additionally sees their own
+    pending uploads so a pending cover never leads to an empty album page.
+    """
+    sql = (
+        "SELECT COUNT(*) AS n, COALESCE(SUM(nsfw), 0) AS nsfw FROM assets "
+        "WHERE album_id = ? AND deleted_at IS NULL AND "
+        "((status = 'approved' AND visibility = 'public')"
+    )
+    params: list[object] = [album_id]
+    if viewer_id:
+        sql += " OR (owner_id = ? AND status = 'pending')"
+        params.append(int(viewer_id))
+    sql += ")"
+    row = db.execute(sql, params).fetchone()
+    return int(row["n"]), int(row["nsfw"])
+
+
 def box_counts(db: sqlite3.Connection, box_id: int) -> tuple[int, int]:
     assets = db.execute(
         "SELECT COUNT(*) AS n FROM assets WHERE box_id = ? AND deleted_at IS NULL",
@@ -390,24 +413,74 @@ def box_cover(db: sqlite3.Connection, box_id: int) -> sqlite3.Row | None:
     ).fetchone()
 
 
-def album_cover(db: sqlite3.Connection, album_id: int) -> sqlite3.Row | None:
-    row = db.execute(
-        "SELECT * FROM albums WHERE id = ?", (album_id,)
-    ).fetchone()
-    if not row:
-        return None
-    if row["cover_asset_id"]:
-        asset = db.execute(
-            asset_query() + "WHERE a.id = ? AND a.deleted_at IS NULL",
-            (row["cover_asset_id"],),
-        ).fetchone()
-        if asset:
-            return asset
+def _cover_query(
+    db: sqlite3.Connection,
+    where: str,
+    params: tuple[object, ...],
+) -> sqlite3.Row | None:
     return db.execute(
-        asset_query()
-        + "WHERE a.album_id = ? AND a.deleted_at IS NULL ORDER BY a.id DESC LIMIT 1",
-        (album_id,),
+        asset_query() + f"WHERE {where} ORDER BY a.id DESC LIMIT 1", params
     ).fetchone()
+
+
+def album_cover(
+    db: sqlite3.Connection, album_id: int, viewer_id: int | None = None
+) -> sqlite3.Row | None:
+    """Pick an album cover without ever preferring NSFW content.
+
+    The order is deliberate: a suitable explicit cover, then a public
+    non-NSFW image, then the uploader's pending non-NSFW image, and only after
+    those a public NSFW image.  Rejected and private images are never eligible
+    for a public cover.  Pending images are included only for their uploader.
+    """
+    album = db.execute("SELECT * FROM albums WHERE id = ?", (album_id,)).fetchone()
+    if not album:
+        return None
+    base = (
+        "a.album_id = ? AND a.deleted_at IS NULL "
+        "AND a.status = 'approved' AND a.visibility = 'public'"
+    )
+    explicit_id = album["cover_asset_id"]
+    if explicit_id:
+        explicit = _cover_query(
+            db,
+            base + " AND a.id = ? AND a.nsfw = 0",
+            (album_id, int(explicit_id)),
+        )
+        if explicit:
+            return explicit
+    public_clear = _cover_query(
+        db, base + " AND a.nsfw = 0", (album_id,)
+    )
+    if public_clear:
+        return public_clear
+    if viewer_id:
+        pending_base = (
+            "a.album_id = ? AND a.deleted_at IS NULL "
+            "AND a.status = 'pending' AND a.owner_id = ?"
+        )
+        pending_clear = _cover_query(
+            db, pending_base + " AND a.nsfw = 0", (album_id, int(viewer_id))
+        )
+        if pending_clear:
+            return pending_clear
+    if explicit_id:
+        explicit = _cover_query(
+            db, base + " AND a.id = ?", (album_id, int(explicit_id))
+        )
+        if explicit:
+            return explicit
+    public_nsfw = _cover_query(db, base + " AND a.nsfw = 1", (album_id,))
+    if public_nsfw:
+        return public_nsfw
+    if viewer_id:
+        return _cover_query(
+            db,
+            "a.album_id = ? AND a.deleted_at IS NULL "
+            "AND a.status = 'pending' AND a.owner_id = ? AND a.nsfw = 1",
+            (album_id, int(viewer_id)),
+        )
+    return None
 
 
 def touch_album(db: sqlite3.Connection, album_id: int | None) -> None:

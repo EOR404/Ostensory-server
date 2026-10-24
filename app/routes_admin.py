@@ -2514,6 +2514,7 @@ def settings_save(
     discord_client_secret: str = Form(""),
     user_upload_enabled: str = Form(""),
     upload_require_review: str = Form(""),
+    rejected_retention_days: str = Form("7"),
     cursor_style: str = Form("default"),
     cursor_custom_url: str = Form(""),
     cursor_hotspot_x: str = Form("4"),
@@ -2670,6 +2671,9 @@ def settings_save(
         or get_setting(db, "discord_client_secret", ""),
         "user_upload_enabled": "1" if user_upload_enabled == "1" else "0",
         "upload_require_review": "1" if upload_require_review == "1" else "0",
+        "rejected_retention_days": str(
+            parse_int(rejected_retention_days, 7, 0, 36500)
+        ),
         "cursor_style": cursor_mode,
         "cursor_custom_url": custom_cursor,
         "cursor_hotspot_x": str(parse_int(cursor_hotspot_x, 4, 0, 64)),
@@ -3261,7 +3265,7 @@ def review_page(
 def review_submit(
     asset_id: int,
     request: Request,
-    action: str = Form("approve"),
+    action: str = Form(""),
     album_id: str = Form(""),
     visibility: str = Form("public"),
     nsfw: str = Form(""),
@@ -3276,6 +3280,8 @@ def review_submit(
     admin: sqlite3.Row = Depends(require_admin),
 ):
     require_csrf(request, csrf, config)
+    if action not in {"approve", "reject"}:
+        raise HTTPException(status_code=400, detail="审核操作不正确。")
     asset = _asset(db, asset_id)
     if not asset:
         raise HTTPException(status_code=404, detail="图片不存在")
@@ -3295,7 +3301,11 @@ def review_submit(
         "updated_at = ? WHERE id = ?",
         (
             status,
-            visibility if visibility in {"public", "private"} else "public",
+            (
+                "private"
+                if status == "rejected"
+                else (visibility if visibility in {"public", "private"} else "public")
+            ),
             1 if nsfw == "1" else 0,
             album["id"] if album else asset["album_id"],
             album["box_id"] if album else asset["box_id"],
@@ -3328,7 +3338,9 @@ def review_submit(
     db.commit()
     return flash_redirect(
         admin_url(request, "/review"),
-        "已通过审核。" if status == "approved" else "已拒绝，图片不会公开显示。",
+        "已通过审核。"
+        if status == "approved"
+        else "已拒绝，图片已移入作者的“未过审”页面，其他用户和访客不会看到。",
     )
 
 

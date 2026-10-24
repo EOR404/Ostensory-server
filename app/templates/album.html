@@ -24,13 +24,14 @@
   <div class="section-heading"><h2>{{ t('album.sub_albums_heading') }}</h2></div>
   <div class="album-grid compact">
     {% for child in children %}
-    <a class="album-card{% if child.nsfw_effective and settings.blur_nsfw %} is-nsfw{% endif %}" href="/albums/{{ child.id }}">
+    <a class="album-card{% if settings.blur_nsfw and (child.nsfw_effective or child.cover_nsfw) %} is-nsfw{% endif %}" href="/albums/{{ child.id }}">
       <div class="album-cover{% if child.locked %} locked{% endif %}">
         {% if child.cover %}<img src="{{ media_url(child.cover.id, 'thumb', child.cover.sha256) }}" alt="" loading="lazy">
         {% elif child.locked %}<span class="lock-glyph">🔒</span>
         {% else %}<span class="empty-glyph">{{ child.name[:1] }}</span>{% endif %}
-        {% if child.nsfw_effective %}<span class="badge badge-nsfw">{{ t('common.nsfw') }}</span>{% endif %}
-        {% if child.nsfw_effective and settings.blur_nsfw %}<span class="nsfw-note">{{ t('albums.sensitive_note') }}</span>{% endif %}
+        {% if child.nsfw_effective or child.cover_nsfw %}<span class="badge badge-nsfw">{{ t('common.nsfw') }}</span>{% endif %}
+        {% if child.cover_pending %}<span class="badge badge-pending">{{ t('common.pending') }}</span>{% endif %}
+        {% if settings.blur_nsfw and (child.nsfw_effective or child.cover_nsfw) %}<span class="nsfw-note">{{ t('albums.sensitive_note') }}</span>{% endif %}
       </div>
       <div class="album-info"><h3>{{ child.name }}</h3><p>{{ t('common.images', count=child.asset_count) }}</p></div>
     </a>

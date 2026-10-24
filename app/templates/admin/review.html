@@ -48,7 +48,7 @@
         <label>审核备注（作者在账户页可见）<textarea name="review_note" rows="2" maxlength="1000">{{ item.review_note }}</textarea></label>
         <div class="inline-actions">
           <button class="button" type="submit" name="action" value="approve">通过审核</button>
-          <button class="button ghost danger" type="submit" name="action" value="reject" data-confirm="拒绝后图片不会公开，作者仍能在账户中看到。确定拒绝？">拒绝</button>
+          <button class="button ghost danger" type="submit" name="action" value="reject" data-confirm="拒绝后图片只会出现在作者的“未过审”页面，其他用户和访客不可见。确定拒绝？">拒绝</button>
         </div>
       </form>
     </div>

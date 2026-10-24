@@ -553,11 +553,22 @@
     }
     var submit = event.submitter || form.querySelector('button[type="submit"]');
     if (submit && !submit.dataset.noBusy) {
+      // A submit button's name/value is only included while it is enabled.
+      // Disabling the clicked button used to drop review actions such as
+      // action=reject, silently turning a rejection into an approval.  Keep a
+      // hidden copy of the value before changing the button state.
+      if (submit.name && !form.querySelector('input[type="hidden"][name="' + submit.name.replace(/"/g, '\\"') + '"]')) {
+        var actionCopy = document.createElement("input");
+        actionCopy.type = "hidden";
+        actionCopy.name = submit.name;
+        actionCopy.value = submit.value;
+        form.appendChild(actionCopy);
+      }
       submit.dataset.original = submit.textContent;
       submit.textContent = "处理中…";
-      submit.disabled = true;
+      if (!submit.name) submit.disabled = true;
       window.setTimeout(function () {
-        submit.disabled = false;
+        if (!submit.name) submit.disabled = false;
         submit.textContent = submit.dataset.original || "提交";
       }, 15000);
     }

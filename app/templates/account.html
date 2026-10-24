@@ -18,6 +18,50 @@
   </div>
 </section>
 
+{% macro work_card(asset, rejected=False) %}
+<article class="account-work">
+  <a class="account-work-thumb" href="/images/{{ asset.id }}">
+    <img src="{{ media_url(asset.id, 'thumb', asset.sha256) }}" alt="" loading="lazy" width="{{ asset.width }}" height="{{ asset.height }}">
+  </a>
+  <div class="account-work-body">
+    <div class="account-work-head">
+      <a href="/images/{{ asset.id }}">{{ asset.title or asset.original_name }}</a>
+      <span class="account-work-tools">
+        {% if not rejected %}<a class="text-link" href="/account/assets/{{ asset.id }}/edit">图片设置</a>{% endif %}
+        <span class="status-pill status-{{ asset.status }}">{% if asset.status == 'pending' %}待审核{% elif asset.status == 'rejected' %}未通过{% else %}已发布{% endif %}</span>
+      </span>
+    </div>
+    <p class="muted small">{{ asset.views }} 次浏览 · {{ asset.author_name }}</p>
+    {% if asset.review_note %}<p class="muted small">审核备注：{{ asset.review_note }}</p>{% endif %}
+    {% if rejected %}
+    <p class="retention-note">
+      {% if asset.expiry %}
+      未过审图片仅自己可见，将在 {{ asset.expiry.expires_at[:10] }} 移入回收站（还剩 {{ asset.expiry.days_left }} 天）。
+      {% else %}
+      未过审图片仅自己可见；当前设置为不自动清理。
+      {% endif %}
+    </p>
+    {% else %}
+    <form method="post" action="/account/assets/{{ asset.id }}" class="account-asset-form">
+      <input type="hidden" name="csrf" value="{{ csrf_token }}">
+      <select name="album_id" aria-label="移动到相册">
+        {% for album in all_albums %}<option value="{{ album.id }}" {% if album.id == asset.album_id %}selected{% endif %}>{{ '— ' * album.depth }}{{ album.name }}</option>{% endfor %}
+      </select>
+      <select name="visibility" aria-label="可见性">
+        <option value="public" {% if asset.visibility != 'private' %}selected{% endif %}>公开</option>
+        <option value="private" {% if asset.visibility == 'private' %}selected{% endif %}>仅自己</option>
+      </select>
+      <button class="button ghost small-button" type="submit">保存</button>
+    </form>
+    {% endif %}
+    <form method="post" action="/account/assets/{{ asset.id }}/delete" data-confirm="把这张图片移入回收站？">
+      <input type="hidden" name="csrf" value="{{ csrf_token }}">
+      <button class="link-button danger-link" type="submit">删除</button>
+    </form>
+  </div>
+</article>
+{% endmacro %}
+
 <div class="account-grid">
   <section class="panel account-panel">
     <div class="panel-head"><h2>账户资料</h2><span class="muted small">署名会用于以后上传的作品</span></div>
@@ -35,45 +79,30 @@
   </section>
 
   <section class="account-works">
-    <div class="section-heading"><h2>我的作品</h2><span class="muted small">{{ account_assets|length }} 张</span></div>
+    <nav class="account-tabs" aria-label="作品分类">
+      <a class="account-tab{% if account_tab != 'rejected' %} is-active{% endif %}" href="/account">我的作品 <span>{{ active_count }}</span></a>
+      <a class="account-tab{% if account_tab == 'rejected' %} is-active{% endif %}" href="/account?view=rejected">未过审 <span>{{ rejected_count }}</span></a>
+    </nav>
+
+    {% if account_tab == 'rejected' %}
+    <div class="section-heading"><h2>未过审图片</h2><span class="muted small">{{ rejected_count }} 张</span></div>
+    <p class="muted small">这里只对你本人可见，其他用户和访客都看不到。{% if rejected_retention_days %}默认保留 {{ rejected_retention_days }} 天；到期后会移入回收站，管理员仍可按回收站规则恢复或清理。{% else %}当前设置为不自动清理，你可以随时手动删除。{% endif %}</p>
+    {% if rejected_assets %}
+    <div class="account-work-list">
+      {% for asset in rejected_assets %}{{ work_card(asset, rejected=True) }}{% endfor %}
+    </div>
+    {% else %}
+    <div class="empty-state"><p class="empty-title">没有被拒绝的图片</p><p>审核未通过的作品会显示在这里。</p></div>
+    {% endif %}
+    {% else %}
+    <div class="section-heading"><h2>我的作品</h2><span class="muted small">{{ active_count }} 张</span></div>
     {% if account_assets %}
     <div class="account-work-list">
-      {% for asset in account_assets %}
-      <article class="account-work">
-        <a class="account-work-thumb" href="/images/{{ asset.id }}">
-          <img src="{{ media_url(asset.id, 'thumb', asset.sha256) }}" alt="" loading="lazy" width="{{ asset.width }}" height="{{ asset.height }}">
-        </a>
-        <div class="account-work-body">
-          <div class="account-work-head">
-            <a href="/images/{{ asset.id }}">{{ asset.title or asset.original_name }}</a>
-            <span class="account-work-tools">
-              <a class="text-link" href="/account/assets/{{ asset.id }}/edit">图片设置</a>
-              <span class="status-pill status-{{ asset.status }}">{% if asset.status == 'pending' %}待审核{% elif asset.status == 'rejected' %}未通过{% else %}已发布{% endif %}</span>
-            </span>
-          </div>
-          <p class="muted small">{{ asset.views }} 次浏览 · {{ asset.author_name }}</p>
-          {% if asset.review_note %}<p class="muted small">审核备注：{{ asset.review_note }}</p>{% endif %}
-          <form method="post" action="/account/assets/{{ asset.id }}" class="account-asset-form">
-            <input type="hidden" name="csrf" value="{{ csrf_token }}">
-            <select name="album_id" aria-label="移动到相册">
-              {% for album in all_albums %}<option value="{{ album.id }}" {% if album.id == asset.album_id %}selected{% endif %}>{{ '— ' * album.depth }}{{ album.name }}</option>{% endfor %}
-            </select>
-            <select name="visibility" aria-label="可见性">
-              <option value="public" {% if asset.visibility != 'private' %}selected{% endif %}>公开</option>
-              <option value="private" {% if asset.visibility == 'private' %}selected{% endif %}>仅自己</option>
-            </select>
-            <button class="button ghost small-button" type="submit">保存</button>
-          </form>
-          <form method="post" action="/account/assets/{{ asset.id }}/delete" data-confirm="把这张图片移入回收站？">
-            <input type="hidden" name="csrf" value="{{ csrf_token }}">
-            <button class="link-button danger-link" type="submit">删除</button>
-          </form>
-        </div>
-      </article>
-      {% endfor %}
+      {% for asset in account_assets %}{{ work_card(asset) }}{% endfor %}
     </div>
     {% else %}
     <div class="empty-state"><p class="empty-title">还没有上传作品</p><p>登录后到上传页选择图片。</p></div>
+    {% endif %}
     {% endif %}
   </section>
 </div>

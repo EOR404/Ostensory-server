@@ -43,6 +43,7 @@ from .security import (
 )
 from .services import delete_asset
 from .storage import Storage
+from .trash import expiry_for, rejected_retention_days
 from .users import USERNAME_RE, user_display_name
 from .web import (
     INTRO_COLOR_RE,
@@ -551,12 +552,26 @@ def account_page(
     assets = _decorate_assets(
         request, db, config, request.app.state.geo, rows, False
     )
+    rejected_assets = [item for item in assets if item["status"] == "rejected"]
+    visible_assets = [item for item in assets if item["status"] != "rejected"]
+    retention_days = rejected_retention_days(db)
+    for item in rejected_assets:
+        item["expiry"] = expiry_for(
+            item.get("reviewed_at") or item.get("updated_at") or "",
+            retention_days,
+        )
+    tab = "rejected" if request.query_params.get("view") == "rejected" else "works"
     return render(
         request,
         db,
         "account.html",
         {
-            "account_assets": assets,
+            "account_assets": visible_assets,
+            "rejected_assets": rejected_assets,
+            "account_tab": tab,
+            "active_count": len(visible_assets),
+            "rejected_count": len(rejected_assets),
+            "rejected_retention_days": retention_days,
             "account_author": user_display_name(user),
             "page_title": "我的账户",
             "all_albums": album_choices(db),

@@ -9,6 +9,7 @@ before anything is replaced, so a failed update can be rolled back manually.
 """
 
 import hashlib
+import html
 import json
 import logging
 import os
@@ -24,6 +25,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
+import xml.etree.ElementTree as ET
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -38,6 +40,10 @@ LOGGER = logging.getLogger(__name__)
 
 DEFAULT_REPO = "EOR404/Ostensory-server"
 DEFAULT_API = "https://api.github.com"
+DEFAULT_WEB = "https://github.com"
+ARCHIVE_ASSET = "ostensory-server.tar.gz"
+CHECKSUM_ASSET = "SHA256SUMS.txt"
+ATOM_NS = {"atom": "http://www.w3.org/2005/Atom"}
 CHECK_INTERVAL_SECONDS = 6 * 3600
 MAX_ARCHIVE_BYTES = 64 * 1024 * 1024
 MAX_EXTRACTED_BYTES = 160 * 1024 * 1024
@@ -197,7 +203,7 @@ def _safe_web_url(value: str) -> str:
     return str(value)
 
 
-def _http_get(url: str, *, limit: int, accept: str = "*/*") -> bytes:
+def _http_fetch(url: str, *, limit: int, accept: str = "*/*") -> tuple[bytes, str]:
     parsed = urllib.parse.urlsplit(url)
     if parsed.scheme not in {"https", "http"} or not parsed.netloc:
         raise UpdateError("下载地址不是有效的 HTTP(S) 地址。")
@@ -228,20 +234,25 @@ def _http_get(url: str, *, limit: int, accept: str = "*/*") -> bytes:
             payload = response.read(limit + 1)
             if len(payload) > limit:
                 raise UpdateError("更新响应超过大小限制，已停止。")
-            return payload
+            return payload, final_url
     except urllib.error.HTTPError as exc:
         if exc.code == 404:
             raise UpdateError("仓库还没有可用的 Release。") from exc
         if exc.code in {401, 403, 429}:
             raise UpdateError(
-                "GitHub 拒绝了更新检查（可能是频率限制或仓库权限）。请稍后再试，"
-                "或配置 OSTENSORY_UPDATE_TOKEN。"
+                "GitHub 拒绝了更新请求（可能是频率限制或仓库权限）。"
+                "更新检查默认使用不受 API 限额影响的 Releases 订阅；"
+                "如果仍然失败，请稍后再试，或配置 OSTENSORY_UPDATE_TOKEN。"
             ) from exc
         raise UpdateError(f"更新服务器返回 HTTP {exc.code}。") from exc
     except urllib.error.URLError as exc:
         raise UpdateError(f"无法连接更新服务器：{exc.reason}") from exc
     except TimeoutError as exc:
         raise UpdateError("连接更新服务器超时。") from exc
+
+
+def _http_get(url: str, *, limit: int, accept: str = "*/*") -> bytes:
+    return _http_fetch(url, limit=limit, accept=accept)[0]
 
 
 def _get_json(url: str) -> Any:
@@ -343,15 +354,170 @@ def _release_from_payload(payload: dict[str, Any]) -> Release | None:
     )
 
 
-def latest_release(current: str | None = None) -> Release:
-    """Find the newest eligible release, never an intermediate version.
+def _allow_prerelease(current: str) -> bool:
+    return bool(re.search(r"(dev|alpha|beta|rc|pre)", current, re.IGNORECASE))
 
-    Development builds consider prereleases; stable builds only receive
-    stable releases.  Every candidate is compared by version number, so one
-    request is enough to jump directly to the newest release.
+
+def _origin(value: str) -> str:
+    parsed = urllib.parse.urlsplit(value)
+    return f"{parsed.scheme}://{parsed.netloc}"
+
+
+def _feed_url() -> str:
+    configured = os.environ.get("OSTENSORY_UPDATE_FEED", "").strip()
+    if configured:
+        raw = configured
+    else:
+        raw = f"{DEFAULT_WEB}/{_repo()}/releases.atom"
+    parsed = urllib.parse.urlsplit(raw)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise UpdateError("更新订阅地址不正确。")
+    if (
+        parsed.scheme != "https"
+        and parsed.hostname not in {"127.0.0.1", "localhost", "::1"}
+        and os.environ.get("OSTENSORY_UPDATE_ALLOW_HTTP") != "1"
+    ):
+        raise UpdateError("更新订阅必须使用 HTTPS；本机测试可显式设置 OSTENSORY_UPDATE_ALLOW_HTTP=1。")
+    return raw
+
+
+def _download_root(feed_url: str) -> str:
+    configured = os.environ.get("OSTENSORY_UPDATE_DOWNLOAD_ROOT", "").strip()
+    raw = configured or _origin(feed_url)
+    parsed = urllib.parse.urlsplit(raw)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise UpdateError("更新下载地址不正确。")
+    if (
+        parsed.scheme != "https"
+        and parsed.hostname not in {"127.0.0.1", "localhost", "::1"}
+        and os.environ.get("OSTENSORY_UPDATE_ALLOW_HTTP") != "1"
+    ):
+        raise UpdateError("更新下载必须使用 HTTPS。")
+    return raw.rstrip("/")
+
+
+def _plain_text(value: str) -> str:
+    text = html.unescape(str(value or ""))
+    text = re.sub(r"<[^>]+>", " ", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _atom_field(entry: ET.Element, name: str) -> str:
+    node = entry.find(f"atom:{name}", ATOM_NS)
+    return str(node.text or "").strip() if node is not None else ""
+
+
+def _atom_tag(entry: ET.Element) -> tuple[str, str]:
+    html_url = ""
+    for link in entry.findall("atom:link", ATOM_NS):
+        if (link.get("rel") or "alternate") == "alternate":
+            html_url = str(link.get("href") or "").strip()
+            break
+    tag = ""
+    if html_url:
+        marker = "/releases/tag/"
+        if marker in html_url:
+            tag = urllib.parse.unquote(html_url.split(marker, 1)[1].split("?", 1)[0])
+    if not tag:
+        raw_id = _atom_field(entry, "id")
+        if "/releases/tag/" in raw_id:
+            tag = urllib.parse.unquote(raw_id.split("/releases/tag/", 1)[1])
+    return tag, html_url
+
+
+def _release_from_atom(
+    tag: str,
+    html_url: str,
+    notes: str,
+    published_at: str,
+    download_root: str,
+) -> Release:
+    repo = _repo()
+    version = normalize_version(tag)
+    if version_key(version) is None:
+        raise UpdateError("最新 Release 的版本号无法识别。")
+    base = (
+        f"{download_root}/{repo}/releases/download/"
+        f"{urllib.parse.quote(tag, safe='')}"
+    )
+    checksum_url = f"{base}/{CHECKSUM_ASSET}"
+    try:
+        text = _http_get(checksum_url, limit=256 * 1024, accept="text/plain").decode(
+            "utf-8", "replace"
+        )
+    except UpdateError as exc:
+        if "还没有可用的 Release" in str(exc):
+            raise UpdateError(
+                "最新 Release 缺少 SHA256SUMS.txt，出于安全考虑拒绝自动更新。"
+            ) from exc
+        raise
+    checksum = _checksum_from_text(text, ARCHIVE_ASSET)
+    if not checksum:
+        raise UpdateError("最新发布包没有 SHA256 校验值，出于安全考虑拒绝自动更新。")
+    return Release(
+        version=version,
+        tag=tag,
+        html_url=_safe_web_url(html_url),
+        notes=notes[:12000],
+        archive_url=f"{base}/{ARCHIVE_ASSET}",
+        checksum=checksum,
+        published_at=published_at,
+        prerelease=_allow_prerelease(version),
+    )
+
+
+def _latest_release_from_feed(current: str) -> Release:
+    """Use the public Releases Atom feed.
+
+    The GitHub REST API is aggressively rate-limited for shared egress IPs.
+    The Atom feed is a normal public web endpoint, needs no token, and gives us
+    the tag/notes; release asset URLs are deterministic from the tag.  SHA256 is
+    still downloaded and verified before installation.
     """
-    current = normalize_version(current or current_version())
-    allow_prerelease = bool(re.search(r"(dev|alpha|beta|rc|pre)", current, re.IGNORECASE))
+    feed_url = _feed_url()
+    try:
+        payload = _http_get(
+            feed_url, limit=2 * 1024 * 1024, accept="application/atom+xml"
+        )
+    except UpdateError as exc:
+        if "还没有可用的 Release" in str(exc):
+            raise NoReleaseAvailable("仓库还没有可用的 Release。") from exc
+        raise
+    try:
+        root = ET.fromstring(payload)
+    except ET.ParseError as exc:
+        raise UpdateError("更新订阅返回了无法识别的数据。") from exc
+    allow_prerelease = _allow_prerelease(current)
+    candidates: list[tuple[tuple[tuple[int, ...], int, str], str, str, str, str]] = []
+    for entry in root.findall("atom:entry", ATOM_NS):
+        tag, html_url = _atom_tag(entry)
+        version = normalize_version(tag)
+        key = version_key(version)
+        if key is None:
+            continue
+        if _allow_prerelease(version) and not allow_prerelease:
+            continue
+        candidates.append(
+            (
+                key,
+                tag,
+                html_url,
+                _plain_text(_atom_field(entry, "content")),
+                _atom_field(entry, "updated"),
+            )
+        )
+    if not candidates:
+        raise NoReleaseAvailable("仓库还没有可用的 Release。")
+    candidates.sort(key=lambda item: item[0], reverse=True)
+    _, tag, html_url, notes, published_at = candidates[0]
+    return _release_from_atom(
+        tag, html_url, notes, published_at, _download_root(feed_url)
+    )
+
+
+def _latest_release_from_api(current: str) -> Release:
+    """Legacy REST fallback for GitHub Enterprise or unusual mirrors."""
+    allow_prerelease = _allow_prerelease(current)
     url = f"{_api_root()}/repos/{_repo()}/releases?per_page=100"
     payload = _get_json(url)
     if not isinstance(payload, list):
@@ -371,12 +537,36 @@ def latest_release(current: str | None = None) -> Release:
     if not candidates:
         raise NoReleaseAvailable("仓库还没有可用的 Release。")
     candidates.sort(key=lambda pair: pair[0], reverse=True)
-    # Only inspect the newest eligible release.  Parsing every release would
-    # download a checksum asset for each old version and slow checks down.
     release = _release_from_payload(candidates[0][1])
     if release is None:
         raise UpdateError("最新 Release 没有可用的服务端安装包。")
     return release
+
+
+def latest_release(current: str | None = None) -> Release:
+    """Find the newest eligible release without relying on the REST API.
+
+    Primary path is the public Atom feed plus deterministic release asset
+    URLs.  The REST API remains as a fallback for GitHub Enterprise/custom
+    mirrors, but a 403 there no longer prevents ordinary deployments from
+    checking for updates.
+    """
+    current = normalize_version(current or current_version())
+    try:
+        return _latest_release_from_feed(current)
+    except NoReleaseAvailable:
+        raise
+    except UpdateError as feed_error:
+        if os.environ.get("OSTENSORY_UPDATE_API_ONLY") == "1":
+            raise
+        try:
+            return _latest_release_from_api(current)
+        except NoReleaseAvailable:
+            raise
+        except UpdateError as api_error:
+            raise UpdateError(
+                f"更新检查失败：{feed_error}（备用 API 也失败：{api_error}）"
+            ) from api_error
 
 
 def _parse_datetime(value: str) -> datetime | None:
@@ -478,9 +668,10 @@ def check_for_update(
     force: bool = False,
 ) -> dict[str, Any]:
     state = update_state(db)
-    if not force and not state["check_due"]:
-        # Cache both successful and failed checks.  A persistent network
-        # failure must not turn the 15-minute watcher into an API hammer.
+    if not force and not state["check_due"] and not state["last_error"]:
+        # Cache successful checks.  A failed check is retried by the next
+        # background tick (15 minutes), so a repaired feed/network does not
+        # leave a stale error on the About page for six hours.
         return state
     try:
         release = latest_release(state["current_version"])

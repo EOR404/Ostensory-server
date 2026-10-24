@@ -14,7 +14,6 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Resp
 
 from .access import (
     album_chain,
-    album_counts,
     album_cover,
     album_effective,
     asset_effective,
@@ -26,6 +25,7 @@ from .access import (
     check_box,
     child_albums,
     ensure_album_path,
+    visible_album_counts,
 )
 from .config import Config
 from .database import audit, get_setting, set_setting
@@ -172,6 +172,21 @@ def public_asset_dict(row: sqlite3.Row | dict) -> dict:
     return item
 
 
+def _viewer_album_clause(viewer_id: int | None) -> tuple[str, tuple[object, ...]]:
+    """SQL for images an album viewer may see.
+
+    Public visitors get approved public images.  A signed-in uploader also sees
+    their own pending images; rejected images are excluded for everyone.
+    """
+    if viewer_id:
+        return (
+            "((a.status = 'approved' AND a.visibility = 'public') "
+            "OR (a.owner_id = ? AND a.status = 'pending'))",
+            (int(viewer_id),),
+        )
+    return ("(a.status = 'approved' AND a.visibility = 'public')", ())
+
+
 def _decorate_assets(
     request: Request,
     db: sqlite3.Connection,
@@ -188,6 +203,8 @@ def _decorate_assets(
         item = public_asset_dict(row)
         item["locked"] = decision.locked
         item["nsfw_effective"] = decision.nsfw
+        item["pending"] = str(row["status"]) == "pending"
+        item["rejected"] = str(row["status"]) == "rejected"
         item["author_name"] = asset_author_name(row)
         item["author_id"] = author_user_id(row)
         try:
@@ -207,6 +224,8 @@ def _decorate_albums(
     rows: list[sqlite3.Row],
     admin: bool,
 ) -> list[dict]:
+    viewer = current_user(db, request)
+    viewer_id = int(viewer["id"]) if viewer else None
     out: list[dict] = []
     for row in rows:
         decision = check_album(request, db, config, geo, row["id"], admin=admin)
@@ -215,7 +234,7 @@ def _decorate_albums(
         item = dict(row)
         item["locked"] = decision.locked
         item["nsfw_effective"] = decision.nsfw
-        item["asset_count"], _ = album_counts(db, row["id"])
+        item["asset_count"], _ = visible_album_counts(db, row["id"], viewer_id)
         item["box_name"] = ""
         if row["box_id"]:
             box_row = db.execute(
@@ -223,12 +242,16 @@ def _decorate_albums(
             ).fetchone()
             if box_row:
                 item["box_name"] = box_row["name"]
-        cover = album_cover(db, row["id"])
+        cover = album_cover(db, row["id"], viewer_id=viewer_id)
         item["cover"] = None
+        item["cover_nsfw"] = False
+        item["cover_pending"] = False
         if cover and not decision.locked:
             cover_decision = check_asset(request, db, config, geo, cover, admin=admin)
             if cover_decision.allowed:
                 item["cover"] = dict(cover)
+                item["cover_nsfw"] = bool(cover_decision.nsfw)
+                item["cover_pending"] = str(cover["status"]) == "pending"
         out.append(item)
     return out
 
@@ -672,16 +695,19 @@ def albums_index(
     settings = site_settings(db)
     all_albums = db.execute("SELECT * FROM albums ORDER BY path COLLATE NOCASE").fetchall()
     albums = _decorate_albums(request, db, config, geo, all_albums, False)
+    viewer = current_user(db, request)
+    viewer_id = int(viewer["id"]) if viewer else None
+    clause, clause_params = _viewer_album_clause(viewer_id)
     for album in albums:
         album["previews"] = []
         if album["locked"]:
             continue
         rows = db.execute(
             asset_query()
-            + "WHERE a.album_id = ? AND a.deleted_at IS NULL"
-            + PUBLIC_ASSET_SQL
-            + " ORDER BY a.id DESC LIMIT 6",
-            (album["id"],),
+            + "WHERE a.album_id = ? AND a.deleted_at IS NULL AND "
+            + clause
+            + " ORDER BY a.nsfw ASC, a.id DESC LIMIT 6",
+            (album["id"], *clause_params),
         ).fetchall()
         album["previews"] = _decorate_assets(
             request, db, config, geo, rows, False
@@ -1399,12 +1425,15 @@ def album_detail(
             status_code=200,
             headers={"Cache-Control": "no-store"},
         )
+    viewer = current_user(db, request)
+    viewer_id = int(viewer["id"]) if viewer else None
+    clause, clause_params = _viewer_album_clause(viewer_id)
     rows = db.execute(
         asset_query()
-        + "WHERE a.album_id = ? AND a.deleted_at IS NULL"
-        + PUBLIC_ASSET_SQL
+        + "WHERE a.album_id = ? AND a.deleted_at IS NULL AND "
+        + clause
         + " ORDER BY a.id DESC",
-        (album_id,),
+        (album_id, *clause_params),
     ).fetchall()
     assets = _decorate_assets(request, db, config, geo, rows, False)
     box_row = _box_by_id(db, int(album["box_id"])) if album["box_id"] else None

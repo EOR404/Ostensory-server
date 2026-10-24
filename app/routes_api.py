@@ -37,6 +37,18 @@ router = APIRouter(prefix="/api/v1")
 SHA_RE = re.compile(r"^[a-fA-F0-9]{64}$")
 
 
+def _sync_visible_asset_sql() -> str:
+    """Assets an API token owner may sync.
+
+    Public approved images plus the caller's own approved/private or pending
+    images.  Rejected images never enter a sync manifest or download route.
+    """
+    return (
+        "((a.status = 'approved' AND (a.visibility = 'public' OR a.owner_id = ?)) "
+        "OR (a.owner_id = ? AND a.status = 'pending'))"
+    )
+
+
 @router.get("/health")
 def health(db: sqlite3.Connection = Depends(get_db_conn), config: Config = Depends(get_config)):
     users = db.execute("SELECT COUNT(*) AS n FROM users").fetchone()["n"]
@@ -269,8 +281,9 @@ def sync_check_duplicates(
     rows = db.execute(
         "SELECT DISTINCT lower(b.sha256) AS sha256 FROM assets a "
         "JOIN blobs b ON b.id = a.blob_id "
-        f"WHERE a.deleted_at IS NULL AND lower(b.sha256) IN ({placeholders})",
-        tuple(hashes),
+        f"WHERE a.deleted_at IS NULL AND {_sync_visible_asset_sql()} "
+        f"AND lower(b.sha256) IN ({placeholders})",
+        (int(user["id"]), int(user["id"]), *hashes),
     ).fetchall()
     return {"duplicates": sorted(str(row["sha256"]) for row in rows)}
 
@@ -282,7 +295,6 @@ def sync_manifest(
     db: sqlite3.Connection = Depends(get_db_conn),
     user: sqlite3.Row = Depends(require_api_user),
 ):
-    _ = user
     album = db.execute("SELECT * FROM albums WHERE id = ?", (album_id,)).fetchone()
     if not album:
         raise HTTPException(status_code=404, detail="相册不存在")
@@ -291,8 +303,9 @@ def sync_manifest(
     rows = db.execute(
         asset_query()
         + f"WHERE a.album_id IN ({placeholders}) AND a.deleted_at IS NULL "
+        f"AND {_sync_visible_asset_sql()} "
         "AND a.client_path IS NOT NULL AND a.client_path != '' ORDER BY a.client_path",
-        ids,
+        (*ids, int(user["id"]), int(user["id"])),
     ).fetchall()
     download_enabled = str(get_setting(db, "client_download_enabled", "1")).lower() in {
         "1",
@@ -327,11 +340,13 @@ def sync_download(
     storage: Storage = Depends(get_storage),
     user: sqlite3.Row = Depends(require_api_user),
 ):
-    _ = user
     if str(get_setting(db, "client_download_enabled", "1")).lower() not in {"1", "true", "yes", "on"}:
         raise HTTPException(status_code=403, detail="管理员已关闭客户端下载同步")
     asset = db.execute(
-        asset_query() + "WHERE a.id = ? AND a.deleted_at IS NULL", (asset_id,)
+        asset_query()
+        + "WHERE a.id = ? AND a.deleted_at IS NULL AND "
+        + _sync_visible_asset_sql(),
+        (asset_id, int(user["id"]), int(user["id"])),
     ).fetchone()
     if not asset:
         raise HTTPException(status_code=404, detail="图片不存在")
@@ -359,13 +374,13 @@ def sync_albums(
     db: sqlite3.Connection = Depends(get_db_conn),
     user: sqlite3.Row = Depends(require_api_user),
 ):
-    _ = user
     rows = db.execute("SELECT * FROM albums ORDER BY path COLLATE NOCASE").fetchall()
     result = []
     for row in rows:
         count = db.execute(
-            "SELECT COUNT(*) AS n FROM assets WHERE album_id = ? AND deleted_at IS NULL",
-            (row["id"],),
+            "SELECT COUNT(*) AS n FROM assets a WHERE a.album_id = ? "
+            "AND a.deleted_at IS NULL AND " + _sync_visible_asset_sql(),
+            (row["id"], int(user["id"]), int(user["id"])),
         ).fetchone()["n"]
         result.append(
             {

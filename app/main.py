@@ -30,7 +30,7 @@ from .routes_api import router as api_router
 from .routes_auth import router as auth_router
 from .routes_public import router as public_router
 from .storage import Storage
-from .trash import purge_expired
+from .trash import expire_rejected, purge_expired
 from .updates import run_auto_update
 from .users import asset_author_name
 from .web import (
@@ -185,6 +185,7 @@ def create_app(config: Config | None = None) -> FastAPI:
         def sweep_trash() -> None:
             db = connect(config.db_path)
             try:
+                expire_rejected(db, app.state.storage)
                 purge_expired(db, app.state.storage)
                 db.commit()
             finally:

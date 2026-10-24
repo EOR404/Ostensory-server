@@ -191,6 +191,10 @@
       <label class="check"><input type="checkbox" name="upload_require_review" value="1" {% if values.upload_require_review == '1' %}checked{% endif %}> 用户上传需要人工审核</label>
     </div>
     <p class="muted small">注册和密码登录可以分别关闭；关闭注册后已有账号仍可登录。开启审核后，用户上传的图片先进入“待审核”，管理员放行前不会出现在公开页面。访客上传是否审核同样受此开关控制。</p>
+    <label>未过审图片保留天数
+      <input type="number" name="rejected_retention_days" value="{{ values.rejected_retention_days }}" min="0" max="36500">
+      <small class="muted">默认 7 天。到期后自动移入回收站，再由回收站规则决定保留或清理；填 0 表示不自动清理。只有上传者本人能在账户的“未过审”页看到这些图片。</small>
+    </label>
     <div class="check-row">
       <label class="check"><input type="checkbox" name="auth_qq_enabled" value="1" {% if values.auth_qq_enabled == '1' %}checked{% endif %}> 启用 QQ 登录</label>
       <label class="check"><input type="checkbox" name="auth_discord_enabled" value="1" {% if values.auth_discord_enabled == '1' %}checked{% endif %}> 启用 Discord 登录</label>

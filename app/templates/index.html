@@ -53,7 +53,7 @@
     </div>
     <div class="album-grid">
       {% for album in albums %}
-      <a class="album-card{% if album.nsfw_effective %} is-nsfw{% endif %}" href="/albums/{{ album.id }}">
+      <a class="album-card{% if settings.blur_nsfw and (album.nsfw_effective or album.cover_nsfw) %} is-nsfw{% endif %}" href="/albums/{{ album.id }}">
         <div class="album-cover{% if album.locked %} locked{% endif %}">
           {% if album.cover %}
             <img src="{{ media_url(album.cover.id, 'thumb', album.cover.sha256) }}" alt="" loading="lazy">
@@ -62,7 +62,8 @@
           {% else %}
             <span class="empty-glyph">{{ album.name[:1] }}</span>
           {% endif %}
-          {% if album.nsfw_effective %}<span class="badge badge-nsfw">{{ t('common.nsfw') }}</span>{% endif %}
+          {% if album.nsfw_effective or album.cover_nsfw %}<span class="badge badge-nsfw">{{ t('common.nsfw') }}</span>{% endif %}
+          {% if album.cover_pending %}<span class="badge badge-pending">{{ t('common.pending') }}</span>{% endif %}
         </div>
         <div class="album-info">
           <h3>{{ album.name }}</h3>

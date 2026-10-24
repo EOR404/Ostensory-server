@@ -74,7 +74,7 @@
         <input type="hidden" name="csrf" value="{{ csrf_token }}">
         <button class="button ghost" type="submit">立即检查更新</button>
       </form>
-      <span class="muted small">检查会访问 GitHub Releases；失败不会重启或改动程序。</span>
+      <span class="muted small">检查会读取 GitHub Releases 的公开订阅，不需要 API Token；失败不会重启或改动程序。</span>
     </div>
 
     {% if update.latest_url %}

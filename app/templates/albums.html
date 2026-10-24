@@ -9,13 +9,14 @@
 </section>
 
 {% macro album_card(album, settings) %}
-<a class="album-card{% if album.nsfw_effective and settings.blur_nsfw %} is-nsfw{% endif %}" href="/albums/{{ album.id }}">
+<a class="album-card{% if settings.blur_nsfw and (album.nsfw_effective or album.cover_nsfw) %} is-nsfw{% endif %}" href="/albums/{{ album.id }}">
   <div class="album-cover{% if album.locked %} locked{% endif %}">
     {% if album.cover %}<img src="{{ media_url(album.cover.id, 'thumb', album.cover.sha256) }}" alt="" loading="lazy">
     {% elif album.locked %}<span class="lock-glyph">🔒</span>
     {% else %}<span class="empty-glyph">{{ album.name[:1] }}</span>{% endif %}
-    {% if album.nsfw_effective %}<span class="badge badge-nsfw">{{ t('common.nsfw') }}</span>{% endif %}
-    {% if album.nsfw_effective and settings.blur_nsfw %}<span class="nsfw-note">{{ t('albums.sensitive_note') }}</span>{% endif %}
+    {% if album.nsfw_effective or album.cover_nsfw %}<span class="badge badge-nsfw">{{ t('common.nsfw') }}</span>{% endif %}
+    {% if album.cover_pending %}<span class="badge badge-pending">{{ t('common.pending') }}</span>{% endif %}
+    {% if settings.blur_nsfw and (album.nsfw_effective or album.cover_nsfw) %}<span class="nsfw-note">{{ t('albums.sensitive_note') }}</span>{% endif %}
   </div>
   <div class="album-info">
     <h3>{{ album.name }}</h3>
@@ -32,8 +33,9 @@
   {% elif album.previews %}
     <span class="album-row-strip">
       {% for preview in album.previews %}
-      <span class="album-row-thumb{% if preview.locked %} is-locked{% endif %}">
+      <span class="album-row-thumb{% if preview.locked %} is-locked{% endif %}{% if settings.blur_nsfw and preview.nsfw_effective %} is-nsfw{% endif %}">
         {% if preview.locked %}<span class="lock-glyph" aria-label="{{ t('common.requires_password') }}">🔒</span>{% else %}<img src="{{ media_url(preview.id, 'thumb', preview.sha256) }}" alt="" loading="lazy">{% endif %}
+        {% if preview.pending %}<span class="badge badge-pending">{{ t('common.pending') }}</span>{% endif %}
       </span>
       {% endfor %}
       {% if album.asset_count > album.previews|length %}<span class="album-row-more">+{{ album.asset_count - album.previews|length }}</span>{% endif %}
@@ -51,11 +53,12 @@
   {% elif albums_layout == 'compact' %}
   <div class="album-compact-list">
     {% for album in albums %}
-    <a class="album-compact-row{% if album.nsfw_effective and settings.blur_nsfw %} is-nsfw{% endif %}" href="/albums/{{ album.id }}">
+    <a class="album-compact-row{% if settings.blur_nsfw and (album.nsfw_effective or album.cover_nsfw) %} is-nsfw{% endif %}" href="/albums/{{ album.id }}">
       <span class="album-compact-cover{% if album.locked %} locked{% endif %}">
         {% if album.cover %}<img src="{{ media_url(album.cover.id, 'thumb', album.cover.sha256) }}" alt="" loading="lazy">
         {% elif album.locked %}<span class="lock-glyph">🔒</span>
         {% else %}<span class="empty-glyph">{{ album.name[:1] }}</span>{% endif %}
+        {% if album.cover_pending %}<span class="badge badge-pending">{{ t('common.pending') }}</span>{% endif %}
       </span>
       <span class="album-compact-main">
         <strong>{{ album.name }}</strong>
@@ -69,7 +72,7 @@
   {% else %}
   <div class="album-rows">
     {% for album in albums %}
-    <a class="album-row{% if album.nsfw_effective and settings.blur_nsfw %} is-nsfw{% endif %}" href="/albums/{{ album.id }}">
+    <a class="album-row" href="/albums/{{ album.id }}">
       <span class="album-row-main">
         <span class="album-row-eyebrow">{{ t('albums.eyebrow') }}</span>
         <span class="album-row-title">{{ album.name }}</span>
