@@ -236,10 +236,7 @@
     <label class="check"><input type="checkbox" name="preview_enabled" value="1" {% if values.preview_enabled == '1' %}checked{% endif %} data-preview-toggle> 生成 1800px 低分辨率预览图（默认开启）</label>
     <p class="muted small">关闭后，新上传不再生成预览图，详情页直接加载原图，会明显增加流量和加载时间。已有预览文件不会自动删除，但会立即停止使用并回退到原图；关闭时页面会询问是否清理。缩略图仍会生成，用于列表页。</p>
     {% if preview_stats.count %}
-    <form method="post" action="{{ admin_url('/settings/previews/clean') }}" class="inline-form" data-confirm="确定永久删除全部 {{ preview_stats.count }} 个预览图文件？删除后无法恢复，之后可重新上传图片或再次开启预览生成。">
-      <input type="hidden" name="csrf" value="{{ csrf_token }}">
-      <button class="button ghost danger-text" type="submit">立即清理现有预览图（{{ preview_stats.count }} 个）</button>
-    </form>
+    <button class="button ghost danger-text" type="submit" form="preview-clean-form">立即清理现有预览图（{{ preview_stats.count }} 个）</button>
     <p class="muted small">清理只删除预览图，不动原图和缩略图；数据库中的预览路径会清空。清理期间仍可访问站点。</p>
     {% else %}
     <p class="muted small">当前没有可清理的预览图文件。</p>
@@ -356,6 +353,12 @@
     <span class="muted small">保存后前台立即生效，无需重启。</span>
   </div>
 </form>
+
+{% if preview_stats.count %}
+<form id="preview-clean-form" method="post" action="{{ admin_url('/settings/previews/clean') }}" data-confirm="确定永久删除全部 {{ preview_stats.count }} 个预览图文件？删除后无法恢复，之后可重新上传图片或再次开启预览生成。">
+  <input type="hidden" name="csrf" value="{{ csrf_token }}">
+</form>
+{% endif %}
 
 <div class="settings-save-dock" role="region" aria-label="保存设置">
   <span class="muted small">改完随时保存，不用滑到底部</span>
