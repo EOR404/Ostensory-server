@@ -58,7 +58,11 @@
     <span>迁移包已生成</span>
     <code>{{ export_name }}</code>
     <a class="button" href="{{ admin_url('/migration/download') }}" data-export-download data-export-auto="{{ '1' if request.query_params.get('export_ready') == '1' else '0' }}">下载迁移包</a>
-    <p class="muted small">下载完成后临时文件会自动删除；如果下载中断，可回到本页重新下载。迁移包包含密钥和账户信息，请按最高机密保管。</p>
+    <form method="post" action="{{ admin_url('/migration/cleanup-export') }}" class="inline-form" data-confirm="确定删除临时迁移包？请先确认已完整下载并校验；删除后需要重新打包才能再下载。">
+      <input type="hidden" name="csrf" value="{{ csrf_token }}">
+      <button class="button ghost danger-text" type="submit">删除临时迁移包</button>
+    </form>
+    <p class="muted small">下载完成后临时文件会保留，可继续下载、断点续传或重新下载；确认文件完整后请点“删除临时迁移包”。再次打包也会清理旧包。迁移包包含密钥和账户信息，请按最高机密保管。</p>
   </div>
   {% endif %}
   {% if last_export %}

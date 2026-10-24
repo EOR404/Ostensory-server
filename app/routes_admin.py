@@ -14,7 +14,7 @@ from urllib.parse import quote
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 from PIL import Image
-from starlette.background import BackgroundTask
+
 
 from .access import (
     album_chain,
@@ -3548,21 +3548,7 @@ def migration_page(
     )
 
 
-def _finish_export_download(config: Config, path: Path) -> None:
-    try:
-        conn = connect(config.db_path)
-        try:
-            set_setting(conn, "migration_export_path", "")
-            set_setting(conn, "migration_export_name", "")
-            conn.commit()
-        finally:
-            conn.close()
-    except Exception:
-        pass
-    try:
-        path.unlink(missing_ok=True)
-    except OSError:
-        pass
+
 
 
 @router.get("/migration/download")
@@ -3602,10 +3588,53 @@ def migration_download(
         resolved,
         media_type="application/gzip",
         filename=resolved.name,
-        background=BackgroundTask(_finish_export_download, config, resolved),
     )
+    # Keep the archive until the operator explicitly removes it (or creates a
+    # new export). Deleting it on the first response would break resumable and
+    # multi-range downloads of very large packages.
     response.headers["Cache-Control"] = "no-store"
     return response
+
+
+@router.post("/migration/cleanup-export")
+def migration_cleanup_export(
+    request: Request,
+    csrf: str = Form(""),
+    db: sqlite3.Connection = Depends(get_db_conn),
+    config: Config = Depends(get_config),
+    admin: sqlite3.Row = Depends(require_admin),
+):
+    require_csrf(request, csrf, config)
+    value = get_setting(db, "migration_export_path", "")
+    path = Path(value) if value else None
+    try:
+        staging = staging_dir(config).resolve()
+        resolved = path.resolve() if path else None
+    except OSError:
+        resolved = None
+    if (
+        resolved is not None
+        and resolved.is_file()
+        and resolved.parent == staging
+        and resolved.name.endswith(".tar.gz")
+    ):
+        try:
+            resolved.unlink(missing_ok=True)
+        except OSError as exc:
+            return flash_redirect(
+                admin_url(request, "/migration"), f"删除临时迁移包失败：{exc}"
+            )
+    set_setting(db, "migration_export_path", "")
+    set_setting(db, "migration_export_name", "")
+    db.commit()
+    audit(
+        db,
+        "migration.export_cleanup",
+        actor=admin["username"],
+        target=resolved.name if resolved else "",
+    )
+    db.commit()
+    return flash_redirect(admin_url(request, "/migration"), "临时迁移包已删除。")
 
 
 @router.post("/migration/export")
