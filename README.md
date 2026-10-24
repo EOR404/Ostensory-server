@@ -97,6 +97,15 @@ http://127.0.0.1:8000/admin
 
 > WebDAV 密码、S3 Secret Key、Worker Token 会使用 `data/master.key` 以 AES-GCM 加密，再保存到 `data/ostensory.sqlite3` 的 `storage_backends` 表。数据库仍需限制权限；如果替换或丢失 `master.key`，这些凭据将无法解密，需要重新填写。
 
+## 统计页
+
+公开的 `/stats` 页除图片/相册数量、容量和元数据覆盖率外，还会按“使用该模型的图片数”列出底模和 LoRA：
+
+- 一张图片使用多个 LoRA 时，每个 LoRA 各计一次；
+- LoRA 名称只统计解析时处于启用状态的条目，停用或未接线的 LoRA 不计入；
+- 底模优先读取 `base_model`，缺失时回退到第一个 Checkpoint / UNET；
+- 后台“公开统计页”里的“元数据覆盖率、底模与 LoRA 使用排行”勾选项控制这些名称是否公开。
+
 ## Cloudflare Worker 图床
 
 配套仓库：[Ostensory-worker](https://github.com/EOR404/Ostensory-worker)

@@ -658,7 +658,7 @@ def albums_index(
 def _public_stats(db: sqlite3.Connection, request: Request) -> dict:
     rows = db.execute(
         "SELECT a.id, a.album_id, a.created_at, a.updated_at, a.metadata_json, "
-        "a.positive_prompt, a.source, b.size "
+        "a.positive_prompt, a.lora_names, a.source, b.size "
         "FROM assets a JOIN blobs b ON b.id = a.blob_id "
         "WHERE a.deleted_at IS NULL"
     ).fetchall()
@@ -680,8 +680,14 @@ def _public_stats(db: sqlite3.Connection, request: Request) -> dict:
     comfy = a1111 = no_meta = with_prompt = 0
     lora_total = 0
     models: set[str] = set()
-    base_models: set[str] = set()
+    base_usage: dict[str, dict[str, object]] = {}
+    lora_usage: dict[str, dict[str, object]] = {}
     guest_count = guest_bytes = 0
+
+    def clean_name(value: object) -> str:
+        if not isinstance(value, str):
+            return ""
+        return " ".join(value.replace("\\", "/").split()).strip()
 
     def add_names(value, bucket: set[str]) -> None:
         if isinstance(value, str):
@@ -697,10 +703,53 @@ def _public_stats(db: sqlite3.Connection, request: Request) -> dict:
                             add_names(str(item[key]), bucket)
                             break
 
+    def add_usage(bucket: dict[str, dict[str, object]], name: str) -> None:
+        key = name.casefold()
+        existing = bucket.get(key)
+        if existing is None:
+            bucket[key] = {"name": name, "count": 1}
+        else:
+            existing["count"] = int(existing["count"]) + 1
+
+    def first_model(metadata: dict) -> str:
+        for field in ("base_model", "checkpoints", "unets"):
+            value = metadata.get(field)
+            if isinstance(value, str):
+                name = clean_name(value)
+                if name:
+                    return name
+            elif isinstance(value, list):
+                for item in value:
+                    name = clean_name(item)
+                    if name:
+                        return name
+        return ""
+
+    def image_loras(metadata: dict, fallback: str) -> list[str]:
+        raw = metadata.get("loras")
+        names: list[str] = []
+        if isinstance(raw, list):
+            for item in raw:
+                if isinstance(item, str):
+                    name = clean_name(item)
+                elif isinstance(item, dict):
+                    name = clean_name(
+                        item.get("name") or item.get("model_name") or item.get("model")
+                    )
+                else:
+                    name = ""
+                if name:
+                    names.append(name)
+        if not names and fallback:
+            names = [clean_name(item) for item in str(fallback).split(",")]
+        return [name for name in names if name]
+
     for row in rows:
         try:
             metadata = json.loads(row["metadata_json"] or "{}")
         except (TypeError, ValueError):
+            metadata = {}
+        if not isinstance(metadata, dict):
             metadata = {}
         kind = str(metadata.get("kind") or "")
         if kind == "comfyui":
@@ -711,11 +760,20 @@ def _public_stats(db: sqlite3.Connection, request: Request) -> dict:
             no_meta += 1
         if row["positive_prompt"] or metadata.get("positive_prompt"):
             with_prompt += 1
-        loras = metadata.get("loras") or []
-        lora_total += len(loras) if isinstance(loras, list) else 0
+        base_name = first_model(metadata)
+        if base_name:
+            add_usage(base_usage, base_name)
         for key in ("checkpoints", "unets", "vaes"):
             add_names(metadata.get(key), models)
-        add_names(metadata.get("base_model"), base_models)
+        loras = image_loras(metadata, str(row["lora_names"] or ""))
+        seen_loras: set[str] = set()
+        for name in loras:
+            key = name.casefold()
+            if key in seen_loras:
+                continue
+            seen_loras.add(key)
+            add_usage(lora_usage, name)
+        lora_total += len(seen_loras)
         if row["source"] == "guest":
             guest_count += 1
             guest_bytes += int(row["size"] or 0)
@@ -733,6 +791,18 @@ def _public_stats(db: sqlite3.Connection, request: Request) -> dict:
         {"name": album_names.get(int(row["album_id"]), tr(request, "common.unnamed_album")), "count": int(row["n"])}
         for row in album_rows[:8]
     ]
+
+    def usage_rows(bucket: dict[str, dict[str, object]]) -> list[dict[str, object]]:
+        return sorted(
+            (
+                {"name": str(item["name"]), "count": int(item["count"])}
+                for item in bucket.values()
+            ),
+            key=lambda item: (-int(item["count"]), str(item["name"]).casefold()),
+        )
+
+    base_model_usage = usage_rows(base_usage)
+    lora_usage_rows = usage_rows(lora_usage)
     return {
         "images": len(rows),
         "albums": len(album_names),
@@ -746,8 +816,13 @@ def _public_stats(db: sqlite3.Connection, request: Request) -> dict:
         "no_meta": no_meta,
         "with_prompt": with_prompt,
         "lora_total": lora_total,
+        "lora_kinds": len(lora_usage_rows),
         "models": len(models),
-        "base_models": len(base_models),
+        "base_models": len(base_usage),
+        "base_model_usage": base_model_usage,
+        "lora_usage": lora_usage_rows,
+        "base_model_usage_max": int(base_model_usage[0]["count"]) if base_model_usage else 0,
+        "lora_usage_max": int(lora_usage_rows[0]["count"]) if lora_usage_rows else 0,
         "top_albums": albums,
         "guest_count": guest_count,
         "guest_bytes": guest_bytes,

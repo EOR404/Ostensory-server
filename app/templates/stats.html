@@ -51,7 +51,7 @@
   <article class="stat-card">
     <span class="stat-label">{{ t('stats.lora') }}</span>
     <strong>{{ stats.lora_total }}</strong>
-    <small>{{ t('stats.lora_hint') }}</small>
+    <small>{{ t('stats.lora_hint', count=stats.lora_kinds) }}</small>
   </article>
   <article class="stat-card">
     <span class="stat-label">{{ t('stats.models') }}</span>
@@ -88,6 +88,59 @@
     </div>
   </div>
   <p class="muted small">{{ t('stats.base_models', count=stats.base_models) }}</p>
+</section>
+
+<section class="stats-section">
+  <div class="stats-section-head">
+    <h2>{{ t('stats.model_usage') }}</h2>
+    <span class="muted small">{{ t('stats.by_usage_images') }}</span>
+  </div>
+  <div class="stats-usage-grid">
+    <div class="stats-usage-panel">
+      <div class="stats-usage-head">
+        <h3>{{ t('stats.base_model_usage') }}</h3>
+        <span class="muted small">{{ t('stats.usage_kinds', count=stats.base_model_usage|length) }}</span>
+      </div>
+      {% if stats.base_model_usage %}
+      {% set model_max = stats.base_model_usage_max if stats.base_model_usage_max else 1 %}
+      <div class="stats-usage-list">
+        {% for item in stats.base_model_usage %}
+        <div class="stats-usage-row" data-usage-name="{{ item.name }}" data-usage-count="{{ item.count }}">
+          <span class="stats-rank">{{ '%02d'|format(loop.index) }}</span>
+          <span class="stats-usage-name" title="{{ item.name }}">{{ item.name }}</span>
+          <span class="stats-usage-bar"><i style="width: {{ (item.count * 100 / model_max)|round(1) }}%"></i></span>
+          <strong>{{ item.count }}</strong>
+        </div>
+        {% endfor %}
+      </div>
+      {% else %}
+      <p class="stats-usage-empty muted small">{{ t('stats.no_model_usage') }}</p>
+      {% endif %}
+    </div>
+
+    <div class="stats-usage-panel">
+      <div class="stats-usage-head">
+        <h3>{{ t('stats.lora_usage') }}</h3>
+        <span class="muted small">{{ t('stats.usage_kinds', count=stats.lora_kinds) }}</span>
+      </div>
+      {% if stats.lora_usage %}
+      {% set lora_max = stats.lora_usage_max if stats.lora_usage_max else 1 %}
+      <div class="stats-usage-list">
+        {% for item in stats.lora_usage %}
+        <div class="stats-usage-row" data-usage-name="{{ item.name }}" data-usage-count="{{ item.count }}">
+          <span class="stats-rank">{{ '%02d'|format(loop.index) }}</span>
+          <span class="stats-usage-name" title="{{ item.name }}">{{ item.name }}</span>
+          <span class="stats-usage-bar"><i style="width: {{ (item.count * 100 / lora_max)|round(1) }}%"></i></span>
+          <strong>{{ item.count }}</strong>
+        </div>
+        {% endfor %}
+      </div>
+      {% else %}
+      <p class="stats-usage-empty muted small">{{ t('stats.no_lora_usage') }}</p>
+      {% endif %}
+    </div>
+  </div>
+  <p class="muted small stats-usage-note">{{ t('stats.usage_note') }}</p>
 </section>
 {% endif %}
 

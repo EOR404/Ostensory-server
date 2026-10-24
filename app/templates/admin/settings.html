@@ -144,13 +144,13 @@
   </section>
 
   <section class="panel">
-    <div class="panel-head"><h2>公开统计页</h2><span class="muted small">只展示聚合数据，不展示标题、提示词、IP 或账户信息</span></div>
+    <div class="panel-head"><h2>公开统计页</h2><span class="muted small">展示聚合数据与底模/LoRA 名称，不展示标题、提示词、IP 或账户信息</span></div>
     <label class="check"><input type="checkbox" name="stats_enabled" value="1" {% if values.stats_enabled == '1' %}checked{% endif %}> 在导航栏最后显示“统计”页面</label>
     <p class="muted small">关闭后前台访问 <code>/stats</code> 会返回 404；下面的勾选项决定页面公开哪些区块。</p>
     <div class="two-col">
       <label class="check"><input type="checkbox" name="stats_show_counts" value="1" {% if values.stats_show_counts == '1' %}checked{% endif %}> 图片、相册总数</label>
       <label class="check"><input type="checkbox" name="stats_show_storage" value="1" {% if values.stats_show_storage == '1' %}checked{% endif %}> 媒体存储容量</label>
-      <label class="check"><input type="checkbox" name="stats_show_metadata" value="1" {% if values.stats_show_metadata == '1' %}checked{% endif %}> 元数据覆盖率与 LoRA 数量</label>
+      <label class="check"><input type="checkbox" name="stats_show_metadata" value="1" {% if values.stats_show_metadata == '1' %}checked{% endif %}> 元数据覆盖率、底模与 LoRA 使用排行</label>
       <label class="check"><input type="checkbox" name="stats_show_activity" value="1" {% if values.stats_show_activity == '1' %}checked{% endif %}> 近期新增与更新时间</label>
       <label class="check"><input type="checkbox" name="stats_show_albums" value="1" {% if values.stats_show_albums == '1' %}checked{% endif %}> 相册公开排行</label>
       <label class="check"><input type="checkbox" name="stats_show_guest" value="1" {% if values.stats_show_guest == '1' %}checked{% endif %}> 访客上传统计（默认不公开）</label>
