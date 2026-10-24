@@ -21,6 +21,7 @@
   <div class="asset-info">
     <a class="asset-title" href="{{ asset_url(asset.id, gallery_source) }}">{{ asset.title or asset.original_name }}</a>
     <div class="asset-meta">
+      {% if asset.author_id %}<a class="asset-author" href="/authors/{{ asset.author_id }}">{{ asset.author_name }}</a>{% endif %}
       <span>{{ asset.width }}×{{ asset.height }}</span>
       {% if asset.lora_count %}<span class="meta-lora">{{ asset.lora_count }} LoRA</span>{% endif %}
       {% if asset.metadata.kind == 'comfyui' %}<span class="dot-comfy">ComfyUI</span>{% endif %}

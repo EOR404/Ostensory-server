@@ -25,7 +25,7 @@
       }
     })();
   </script>
-  <link rel="stylesheet" href="/static/public.css?v=29">
+  <link rel="stylesheet" href="/static/public.css?v=30">
   <style>:root { --accent: {{ settings.accent_color or '#d7a76c' }}; }</style>
   {% if settings.custom_css %}<style>{{ settings.custom_css|safe }}</style>{% endif %}
   {% if settings.custom_head_html %}{{ settings.custom_head_html|safe }}{% endif %}
@@ -49,7 +49,9 @@
       {% if settings.stats_enabled == '1' %}<a href="/stats" {% if current_path == '/stats' %}class="active"{% endif %}>{{ t('nav.stats') }}</a>{% endif %}
       {% if is_user %}
       <a href="/account" {% if current_path == '/account' %}class="active"{% endif %}>{{ user.display_name or user.username }}</a>
-      {% elif settings.auth_password_enabled == '1' or settings.auth_qq_enabled == '1' or settings.auth_discord_enabled == '1' %}
+      {% elif settings.auth_password_enabled == '1'
+        or (settings.auth_qq_enabled == '1' and settings.qq_client_id and settings.qq_client_secret)
+        or (settings.auth_discord_enabled == '1' and settings.discord_client_id and settings.discord_client_secret) %}
       <a href="/login" {% if current_path == '/login' %}class="active"{% endif %}>{{ t('nav.login') }}</a>
       {% endif %}
     </nav>
