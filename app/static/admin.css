@@ -313,7 +313,7 @@ body.is-busy { cursor: progress; }
 .button.secondary { background: transparent; color: var(--text); border-color: var(--line); }
 .button.danger { background: transparent; color: #f0a49c; border-color: rgba(240,164,156,.45); }
 @media (max-width: 800px) {
-  .storage-stats { grid-template-columns: 1fr 1fr; }
+  .stat-grid.storage-stats { grid-template-columns: 1fr 1fr; }
   .storage-capacity-head { flex-direction: column; gap: 2px; }
 }
 @media (max-width: 1100px) {
