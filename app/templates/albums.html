@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+{% block body_class %} page-albums layout-{{ albums_layout }}{% endblock %}
+{% block title %}{{ t('albums.title') }} · {{ settings.site_name }}{% endblock %}
+{% block content %}
+<section class="page-heading">
+  <p class="eyebrow">{{ t('albums.eyebrow') }}</p>
+  <h1>{{ t('albums.title') }}</h1>
+  <p class="muted">{{ t('albums.subtitle') }}</p>
+</section>
+
+{% macro album_card(album, settings) %}
+<a class="album-card{% if album.nsfw_effective and settings.blur_nsfw %} is-nsfw{% endif %}" href="/albums/{{ album.id }}">
+  <div class="album-cover{% if album.locked %} locked{% endif %}">
+    {% if album.cover %}<img src="{{ media_url(album.cover.id, 'thumb', album.cover.sha256) }}" alt="" loading="lazy">
+    {% elif album.locked %}<span class="lock-glyph">🔒</span>
+    {% else %}<span class="empty-glyph">{{ album.name[:1] }}</span>{% endif %}
+    {% if album.nsfw_effective %}<span class="badge badge-nsfw">{{ t('common.nsfw') }}</span>{% endif %}
+    {% if album.nsfw_effective and settings.blur_nsfw %}<span class="nsfw-note">{{ t('albums.sensitive_note') }}</span>{% endif %}
+  </div>
+  <div class="album-info">
+    <h3>{{ album.name }}</h3>
+    <p>{{ album.path }}</p>
+    <p>{{ t('common.images', count=album.asset_count) }}{% if album.locked %} · {{ t('common.requires_password') }}{% endif %}</p>
+    {% if album.box_name %}<p class="box-label">{{ album.box_name }}</p>{% endif %}
+  </div>
+</a>
+{% endmacro %}
+
+{% macro album_previews(album) %}
+  {% if album.locked %}
+    <span class="album-row-lock"><span class="lock-glyph">🔒</span><span>{{ t('common.requires_password') }}</span></span>
+  {% elif album.previews %}
+    <span class="album-row-strip">
+      {% for preview in album.previews %}
+      <span class="album-row-thumb{% if preview.locked %} is-locked{% endif %}">
+        {% if preview.locked %}<span class="lock-glyph" aria-label="{{ t('common.requires_password') }}">🔒</span>{% else %}<img src="{{ media_url(preview.id, 'thumb', preview.sha256) }}" alt="" loading="lazy">{% endif %}
+      </span>
+      {% endfor %}
+      {% if album.asset_count > album.previews|length %}<span class="album-row-more">+{{ album.asset_count - album.previews|length }}</span>{% endif %}
+    </span>
+  {% else %}
+    <span class="album-row-empty">{{ album.name[:1] }}</span>
+  {% endif %}
+{% endmacro %}
+
+{% if albums %}
+  {% if albums_layout == 'cards' %}
+  <div class="album-grid">
+    {% for album in albums %}{{ album_card(album, settings) }}{% endfor %}
+  </div>
+  {% elif albums_layout == 'compact' %}
+  <div class="album-compact-list">
+    {% for album in albums %}
+    <a class="album-compact-row{% if album.nsfw_effective and settings.blur_nsfw %} is-nsfw{% endif %}" href="/albums/{{ album.id }}">
+      <span class="album-compact-cover{% if album.locked %} locked{% endif %}">
+        {% if album.cover %}<img src="{{ media_url(album.cover.id, 'thumb', album.cover.sha256) }}" alt="" loading="lazy">
+        {% elif album.locked %}<span class="lock-glyph">🔒</span>
+        {% else %}<span class="empty-glyph">{{ album.name[:1] }}</span>{% endif %}
+      </span>
+      <span class="album-compact-main">
+        <strong>{{ album.name }}</strong>
+        <small>{{ album.path }}{% if album.locked %} · {{ t('common.requires_password') }}{% endif %}</small>
+      </span>
+      <span class="album-compact-count">{{ t('common.image_short', count=album.asset_count) }}</span>
+      <span class="album-compact-arrow" aria-hidden="true">→</span>
+    </a>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="album-rows">
+    {% for album in albums %}
+    <a class="album-row{% if album.nsfw_effective and settings.blur_nsfw %} is-nsfw{% endif %}" href="/albums/{{ album.id }}">
+      <span class="album-row-main">
+        <span class="album-row-eyebrow">{{ t('albums.eyebrow') }}</span>
+        <span class="album-row-title">{{ album.name }}</span>
+        <span class="album-row-meta">{{ album.path }} · {{ t('common.images', count=album.asset_count) }}{% if album.locked %} · {{ t('common.requires_password') }}{% endif %}</span>
+        <span class="album-row-open">{{ t('albums.open') }} <span aria-hidden="true">→</span></span>
+      </span>
+      <span class="album-row-visuals">
+        {{ album_previews(album) }}
+      </span>
+    </a>
+    {% endfor %}
+  </div>
+  {% endif %}
+{% else %}
+<div class="empty-state"><p class="empty-title">{{ t('albums.empty_title') }}</p><p>{{ t('albums.empty_hint') }}</p></div>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,209 @@
+{% extends "base.html" %}
+{% block body_class %} page-image{% endblock %}
+{% block title %}{{ asset.title or asset.original_name }} · {{ settings.site_name }}{% endblock %}
+{% block content %}
+<nav class="breadcrumb" aria-label="{{ t('image.breadcrumb') }}">
+  <a href="/">{{ t('nav.home') }}</a><span>/</span>
+  {% if box %}<a href="/boxes/{{ box.id }}">{{ box.name }}</a><span>/</span>{% endif %}
+  {% if album %}<a href="/albums/{{ album.id }}">{{ album.name }}</a><span>/</span>{% endif %}
+  <span>{{ asset.title or asset.original_name }}</span>
+</nav>
+
+{% set prev_url = asset_url(prev_asset.id, gallery_source) if prev_asset else '' %}
+{% set next_url = asset_url(next_asset.id, gallery_source) if next_asset else '' %}
+<article class="image-detail{% if nsfw and settings.blur_nsfw %} is-nsfw{% endif %}" data-nsfw="{{ '1' if nsfw else '0' }}" data-prev-url="{{ prev_url }}" data-next-url="{{ next_url }}">
+  <div class="detail-visual">
+    <div class="detail-image-wrap{% if nsfw and settings.blur_nsfw %} nsfw-wrap{% endif %}">
+      {% if prev_asset %}
+      <div class="gallery-zone gallery-zone-prev">
+        <a class="gallery-arrow gallery-prev" href="{{ prev_url }}" aria-label="{{ t('common.previous_item') }}" title="{{ t('image.previous') }}">‹</a>
+      </div>
+      {% endif %}
+      <img id="detail-image" src="{{ media_url(asset.id, 'preview', asset.sha256) }}" alt="{{ asset.title or asset.original_name }}" width="{{ asset.width }}" height="{{ asset.height }}">
+      {% if next_asset %}
+      <div class="gallery-zone gallery-zone-next">
+        <a class="gallery-arrow gallery-next" href="{{ next_url }}" aria-label="{{ t('common.next_item') }}" title="{{ t('image.next') }}">›</a>
+      </div>
+      {% endif %}
+      {% if nsfw and settings.blur_nsfw %}
+      <button class="nsfw-cover" type="button" data-reveal-nsfw>
+        <span>{{ t('image.nsfw_blur') }}</span>
+        <strong>{{ t('image.nsfw_show') }}</strong>
+        <small>{{ t('image.nsfw_note') }}</small>
+      </button>
+      {% endif %}
+    </div>
+    <div class="detail-toolbar">
+      <a class="button" href="{{ download_url(asset.id) }}">{{ t('image.download') }} <span class="muted-inline">{{ asset.size|filesize }}</span></a>
+      <a class="button ghost" href="{{ view_url(asset.id) }}" target="_blank" rel="noopener">{{ t('image.view_original') }}</a>
+      <span class="muted">{{ asset.width }}×{{ asset.height }} · {{ asset.mime }}</span>
+    </div>
+    {% if settings.external_image_enabled == '1' %}
+    <div class="external-link-box">
+      <span class="external-link-label">{{ t('image.external_label') }}</span>
+      <div class="copy-field-row">
+        <input id="external-image-url" type="text" readonly value="{{ base_url }}{{ external_image_url(asset.id) }}?v={{ asset.sha256[:12] }}">
+        <button class="copy-btn" type="button" data-copy-target="#external-image-url">{{ t('common.copy') }}</button>
+      </div>
+      <small class="muted">{{ t('image.external_hint') }}</small>
+    </div>
+    {% endif %}
+    <div class="detail-pager">
+      <span class="pager-count">{{ t('image.pager', position=detail_position, total=detail_total) }}{% if gallery_source == 'album' %}{{ t('image.in_album') }}{% else %}{{ t('image.in_all') }}{% endif %}</span>
+      <span class="pager-keys"><kbd>←</kbd><kbd>→</kbd> {{ t('image.keys') }}</span>
+    </div>
+  </div>
+
+  <aside class="detail-side">
+    {% if album and gallery_source == 'album' %}
+    <a class="detail-back" href="/albums/{{ album.id }}">{{ t('image.back_album', name=album.name) }}</a>
+    {% else %}
+    <a class="detail-back" href="/browse">{{ t('image.back_all') }}</a>
+    {% endif %}
+    <p class="eyebrow">{{ t('image.eyebrow') }}</p>
+    <h1>{{ asset.title or asset.original_name }}</h1>
+    <p class="muted">{{ asset.original_name }}</p>
+    {% if asset.description %}<div class="detail-intro{% if asset.intro_quote %} has-quote{% endif %}" style="{{ intro_style(asset) }}">{% if asset.intro_allow_html %}{{ asset.description|safe }}{% else %}{{ asset.description }}{% endif %}</div>{% endif %}
+    <div class="tag-row">
+      {% if metadata.kind == 'comfyui' %}<span class="tag">ComfyUI</span>{% elif metadata.kind == 'a1111' %}<span class="tag">A1111</span>{% else %}<span class="tag">{{ t('image.no_metadata') }}</span>{% endif %}
+      {% if nsfw %}<span class="tag tag-danger">{{ t('common.nsfw') }}</span>{% endif %}
+      {% if asset.encrypted %}<span class="tag">{{ t('image.encrypted') }}</span>{% endif %}
+      {% if asset.album_name %}<a class="tag tag-link" href="/albums/{{ asset.album_id }}">{{ asset.album_name }}</a>{% endif %}
+      {% if asset.box_name %}<a class="tag tag-link" href="/boxes/{{ asset.box_id }}">{{ asset.box_name }}</a>{% endif %}
+    </div>
+
+    <section class="meta-block">
+      <div class="meta-heading">
+        <h2>{{ t('image.positive_prompt') }}</h2>
+        {% if metadata.positive_prompt %}<button class="copy-btn" type="button" data-copy-target="#positive-prompt">{{ t('image.copy') }}</button>{% endif %}
+      </div>
+      <pre class="prompt-box" id="positive-prompt">{{ metadata.positive_prompt or t('image.no_positive') }}</pre>
+    </section>
+
+    {% if metadata.negative_prompt %}
+    <section class="meta-block">
+      <div class="meta-heading">
+        <h2>{{ t('image.negative_prompt') }}</h2>
+        <button class="copy-btn" type="button" data-copy-target="#negative-prompt">{{ t('image.copy') }}</button>
+      </div>
+      <pre class="prompt-box" id="negative-prompt">{{ metadata.negative_prompt }}</pre>
+    </section>
+    {% endif %}
+
+    {% if metadata.loras %}
+    <section class="meta-block">
+      <div class="meta-heading">
+        <h2>LoRA <small class="meta-note">{{ t('image.lora_note') }}</small></h2>
+        <button class="copy-btn" type="button" data-copy-target="#lora-list">{{ t('image.copy_list') }}</button>
+      </div>
+      <ul class="lora-list" id="lora-list">
+        {% for lora in metadata.loras %}
+        <li><span class="lora-name" title="{{ lora.name }}">{{ lora.name|string|truncate(80, True, '…') }}</span>{% if lora.model_weight is not none %}<span class="lora-weight">{{ lora.model_weight }}</span>{% endif %}</li>
+        {% endfor %}
+      </ul>
+    </section>
+    {% endif %}
+
+    {% if metadata.samplers %}
+    <section class="meta-block">
+      <h2>{{ t('image.sampling') }}</h2>
+      <div class="sampler-list">
+        {% for sampler in metadata.samplers %}
+        <dl class="sampler-card">
+          {% if sampler.seed is defined %}<div><dt>Seed</dt><dd>{{ sampler.seed }}</dd></div>{% endif %}
+          {% if sampler.steps is defined %}<div><dt>Steps</dt><dd>{{ sampler.steps }}</dd></div>{% endif %}
+          {% if sampler.cfg is defined %}<div><dt>CFG</dt><dd>{{ sampler.cfg }}</dd></div>{% endif %}
+          {% if sampler.sampler_name is defined %}<div><dt>Sampler</dt><dd>{{ sampler.sampler_name }}</dd></div>{% endif %}
+          {% if sampler.scheduler is defined %}<div><dt>Scheduler</dt><dd>{{ sampler.scheduler }}</dd></div>{% endif %}
+          {% if sampler.width is defined %}<div><dt>{{ t('image.generation_size') }}</dt><dd>{{ sampler.width }}×{{ sampler.height }}</dd></div>{% endif %}
+        </dl>
+        {% endfor %}
+      </div>
+    </section>
+    {% endif %}
+
+    {% if metadata.base_model or metadata.checkpoints or metadata.unets or metadata.vaes %}
+    <section class="meta-block">
+      <h2>{{ t('image.models') }}</h2>
+      <ul class="model-list">
+        {% if metadata.base_model %}<li><span>{{ t('image.base_model') }}</span><code>{{ metadata.base_model }}</code></li>{% endif %}
+        {% for name in metadata.checkpoints %}{% if name != metadata.base_model %}<li><span>Checkpoint</span><code>{{ name }}</code></li>{% endif %}{% endfor %}
+        {% for name in metadata.unets %}<li><span>UNET</span><code>{{ name }}</code></li>{% endfor %}
+        {% for name in metadata.vaes %}<li><span>VAE</span><code>{{ name }}</code></li>{% endfor %}
+      </ul>
+    </section>
+    {% endif %}
+
+    <section class="meta-block">
+      <div class="meta-heading">
+        <h2>{{ t('image.full_json') }}</h2>
+        <button class="copy-btn" type="button" data-copy-target="#metadata-json">{{ t('image.copy') }}</button>
+      </div>
+      <pre class="json-box" id="metadata-json">{{ metadata|json_pretty }}</pre>
+    </section>
+
+    {% if workflow_json %}
+    <section class="meta-block">
+      <div class="meta-heading">
+        <h2>{{ t('image.workflow') }}</h2>
+        <button class="copy-btn" type="button" data-download-workflow>{{ t('image.download_workflow') }}</button>
+      </div>
+      <p class="muted">{{ t('image.workflow_hint') }}</p>
+    </section>
+    <script type="application/json" id="workflow-json">{{ workflow_json|tojson }}</script>
+    {% endif %}
+
+    {% if metadata.nodes %}
+    <details class="meta-block nodes-block">
+      <summary>{{ t('image.nodes', count=metadata.nodes|length) }}</summary>
+      <ul class="node-list">
+        {% for node in metadata.nodes[:80] %}
+        <li><span class="node-id">#{{ node.id }}</span><span>{{ node.type }}</span>{% if node.title %}<small>{{ node.title }}</small>{% endif %}</li>
+        {% endfor %}
+      </ul>
+    </details>
+    {% endif %}
+
+    {% if metadata.warnings %}
+    <details class="meta-block warnings-block">
+      <summary>{{ t('image.warnings', count=metadata.warnings|length) }}</summary>
+      <ul>{% for warning in metadata.warnings %}<li>{{ warning }}</li>{% endfor %}</ul>
+    </details>
+    {% endif %}
+  </aside>
+</article>
+
+{% if related %}
+<section class="section">
+  <div class="section-heading"><h2>{{ t('image.related') }}</h2>{% if album %}<a class="text-link" href="/albums/{{ album.id }}">{{ t('image.view_album') }}</a>{% endif %}</div>
+  <div class="asset-grid compact">
+    {% for asset in related %}{% include "partials/asset_card.html" %}{% endfor %}
+  </div>
+</section>
+{% endif %}
+{% endblock %}
+{% block scripts %}
+<script>
+(function () {
+  var article = document.querySelector(".image-detail");
+  if (!article) return;
+  var prev = article.getAttribute("data-prev-url");
+  var next = article.getAttribute("data-next-url");
+  function editable(target) {
+    if (!target) return false;
+    var tag = (target.tagName || "").toLowerCase();
+    return tag === "input" || tag === "textarea" || tag === "select" || target.isContentEditable;
+  }
+  document.addEventListener("keydown", function (event) {
+    if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey || editable(event.target)) return;
+    if (event.key === "ArrowLeft" && prev) {
+      event.preventDefault();
+      window.location.href = prev;
+    } else if (event.key === "ArrowRight" && next) {
+      event.preventDefault();
+      window.location.href = next;
+    }
+  });
+})();
+</script>
+{% endblock %}

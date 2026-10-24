@@ -1,0 +1,148 @@
+{% extends "admin/base_admin.html" %}
+{% block title %}存储 · 管理后台{% endblock %}
+{% block content %}
+<div class="page-title">
+  <div>
+    <p class="eyebrow">STORAGE</p>
+    <h1>存储方式</h1>
+    <p class="muted">按顺序检查每个存储方式的容量；达到上限或使用率阈值后，新图片自动写入下一种。管理员和访客上传都遵守同一顺序。</p>
+  </div>
+</div>
+
+<div class="stat-grid storage-stats">
+  <div class="stat-card"><span>已启用方式</span><strong>{{ backends|selectattr('enabled')|list|length }}</strong></div>
+  <div class="stat-card"><span>已存图片总量</span><strong>{{ total_used_mb }}</strong><small>MB</small></div>
+  <div class="stat-card"><span>存储方式数量</span><strong>{{ backends|length }}</strong></div>
+</div>
+
+<div class="admin-notice">
+  容量统计的是本应用已经写入该存储的原始图片大小，不包含缩略图/预览图，也不会去查询云厂商账户的总配额。
+  切换阈值按“已用 ÷ 上限”计算；例如上限 10 GB、阈值 90%，用到 9 GB 后就不再写入。
+  切换只影响新上传，已有图片不会自动搬家；需要迁移时请先把旧存储里的图片保留到确认不再使用。
+  密码、Secret Key 和 Token 会加密保存；如果更换了 <code>data/master.key</code>，需要重新填写。
+</div>
+
+<section class="panel">
+  <div class="panel-head"><h2>切换顺序</h2><span class="muted small">数字越小越先使用</span></div>
+  <div class="storage-order">
+    {% for backend in backends %}
+    <span class="storage-order-item {% if not backend.enabled %}is-off{% endif %}">
+      <b>{{ backend.priority }}</b>{{ backend.name }}
+      {% if backend.threshold_hit %}<em>已到阈值</em>{% endif %}
+    </span>
+    {% if not loop.last %}<span class="storage-order-arrow">→</span>{% endif %}
+    {% endfor %}
+  </div>
+</section>
+
+{% for backend in backends %}
+<section class="panel storage-card">
+  <div class="panel-head">
+    <div>
+      <h2>{{ backend.name }}</h2>
+      <span class="muted small">{{ storage_kinds.get(backend.kind, backend.kind) }} · ID {{ backend.id }}</span>
+    </div>
+    <div class="storage-badges">
+      {% if backend.enabled %}<span class="badge ok">启用</span>{% else %}<span class="badge">停用</span>{% endif %}
+      {% if backend.kind == 'local' %}<span class="badge">本机</span>{% endif %}
+      {% if backend.threshold_hit %}<span class="badge warn">已到阈值</span>{% endif %}
+      {% if backend.full %}<span class="badge danger">已满</span>{% endif %}
+    </div>
+  </div>
+
+  <div class="storage-capacity">
+    <div class="storage-capacity-head">
+      <span>已用 {{ backend.used_mb }} MB{% if backend.quota_mb_value %} / {{ backend.quota_mb_value }} MB{% else %} / 不限{% endif %}</span>
+      <span>{% if backend.remaining_mb is not none %}剩余 {{ backend.remaining_mb }} MB{% else %}未设置上限{% endif %}</span>
+    </div>
+    {% if backend.quota_mb_value %}
+    <div class="storage-meter" aria-hidden="true"><span style="width: {{ [backend.percent, 100]|min }}%"></span></div>
+    {% endif %}
+    {% if backend.local_free is not none %}
+    <p class="muted small">本机磁盘剩余：{{ (backend.local_free / 1024 / 1024)|round(1) }} MB。本机上限只限制本应用写入，不会占满整块磁盘。</p>
+    {% endif %}
+  </div>
+
+  <form method="post" action="{{ admin_url('/storage/' ~ backend.id) }}" class="storage-form">
+    <input type="hidden" name="csrf" value="{{ csrf_token }}">
+    <div class="two-col">
+      <label>显示名称<input name="name" value="{{ backend.name }}" maxlength="80" required></label>
+      <label>顺序（越小越先）<input type="number" name="priority" value="{{ backend.priority }}" min="0" max="10000"></label>
+    </div>
+    <div class="three-col">
+      <label>容量上限（MB，0=不限）<input type="number" name="quota_mb" value="{{ backend.quota_mb_value }}" min="0" max="10000000"></label>
+      <label>切换阈值（%）<input type="number" name="threshold_pct" value="{{ backend.threshold_pct }}" min="1" max="100"></label>
+      <label class="check storage-enabled"><input type="checkbox" name="enabled" value="1" {% if backend.enabled %}checked{% endif %}> 启用这一种</label>
+    </div>
+
+    {% if backend.kind == 'webdav' %}
+    <div class="two-col">
+      <label>WebDAV 地址<input name="cfg_url" value="{{ backend.config.get('url', '') }}" placeholder="https://dav.example.com/ostensory"></label>
+      <label>路径前缀（可选）<input name="cfg_prefix" value="{{ backend.config.get('prefix', '') }}" placeholder="images"></label>
+    </div>
+    <div class="two-col">
+      <label>用户名<input name="cfg_username" value="{{ backend.config.get('username', '') }}"></label>
+      <label>密码<input type="password" name="cfg_password" value="" placeholder="{% if backend.secret_set.password %}已保存，留空不修改{% else %}未设置{% endif %}"></label>
+    </div>
+    <label class="check"><input type="checkbox" name="cfg_verify_tls" value="1" {% if backend.config.get('verify_tls', True) %}checked{% endif %}> 校验 HTTPS 证书</label>
+    {% elif backend.kind == 'worker' %}
+    <div class="two-col">
+      <label>Worker 地址<input name="cfg_url" value="{{ backend.config.get('url', '') }}" placeholder="https://ostensory-worker.example.workers.dev"></label>
+      <label>路径前缀（可选）<input name="cfg_prefix" value="{{ backend.config.get('prefix', '') }}" placeholder="ostensory"></label>
+    </div>
+    <label>管理 Token<input type="password" name="cfg_token" value="" placeholder="{% if backend.secret_set.token %}已保存，留空不修改{% else %}在 Worker 中设置的 ADMIN_TOKEN{% endif %}"></label>
+    <label class="check"><input type="checkbox" name="cfg_verify_tls" value="1" {% if backend.config.get('verify_tls', True) %}checked{% endif %}> 校验 HTTPS 证书</label>
+    {% elif backend.kind == 's3' %}
+    <div class="two-col">
+      <label>Endpoint<input name="cfg_endpoint" value="{{ backend.config.get('endpoint', '') }}" placeholder="https://<account>.r2.cloudflarestorage.com"></label>
+      <label>Bucket<input name="cfg_bucket" value="{{ backend.config.get('bucket', '') }}" placeholder="ostensory"></label>
+    </div>
+    <div class="three-col">
+      <label>Region<input name="cfg_region" value="{{ backend.config.get('region', 'auto') }}" placeholder="auto"></label>
+      <label>Access Key<input name="cfg_access_key" value="{{ backend.config.get('access_key', '') }}"></label>
+      <label>Secret Key<input type="password" name="cfg_secret_key" value="" placeholder="{% if backend.secret_set.secret_key %}已保存，留空不修改{% else %}未设置{% endif %}"></label>
+    </div>
+    <div class="two-col">
+      <label>路径前缀（可选）<input name="cfg_prefix" value="{{ backend.config.get('prefix', '') }}" placeholder="ostensory"></label>
+      <label>寻址方式
+        <select name="cfg_addressing_style">
+          <option value="auto" {% if backend.config.get('addressing_style', 'auto') == 'auto' %}selected{% endif %}>自动</option>
+          <option value="path" {% if backend.config.get('addressing_style') == 'path' %}selected{% endif %}>Path style</option>
+          <option value="virtual" {% if backend.config.get('addressing_style') == 'virtual' %}selected{% endif %}>Virtual host style</option>
+        </select>
+      </label>
+    </div>
+    {% else %}
+    <p class="muted small">本机存储把文件放在 <code>data/originals</code> 等目录；容量上限只影响新上传，不会自动删除已有图片。</p>
+    {% endif %}
+
+    <div class="inline-actions storage-actions">
+      <button class="button" type="submit">保存设置</button>
+      <button class="button secondary" type="submit" formaction="{{ admin_url('/storage/' ~ backend.id ~ '/test') }}" formnovalidate>测试连接</button>
+      {% if backend.kind != 'local' %}
+      <button class="button danger" type="submit" formaction="{{ admin_url('/storage/' ~ backend.id ~ '/delete') }}" formnovalidate onclick="return confirm('确定移除这个存储方式？只有里面没有图片时才能移除。')">移除</button>
+      {% endif %}
+    </div>
+  </form>
+</section>
+{% endfor %}
+
+<section class="panel">
+  <div class="panel-head"><h2>新增存储方式</h2><span class="muted small">先新增，再填写配置</span></div>
+  <form method="post" action="{{ admin_url('/storage/add') }}" class="storage-form">
+    <input type="hidden" name="csrf" value="{{ csrf_token }}">
+    <div class="three-col">
+      <label>类型
+        <select name="kind">
+          {% for kind, label in storage_kinds.items() %}
+          {% if kind != 'local' %}<option value="{{ kind }}">{{ label }}</option>{% endif %}
+          {% endfor %}
+        </select>
+      </label>
+      <label>显示名称<input name="name" maxlength="80" placeholder="例如 Cloudflare R2"></label>
+      <label>顺序（越小越先）<input type="number" name="priority" value="100" min="0" max="10000"></label>
+    </div>
+    <div class="inline-actions"><button class="button" type="submit">新增</button></div>
+  </form>
+</section>
+{% endblock %}

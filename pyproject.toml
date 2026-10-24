@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ostensory"
+version = "1.0.0"
+description = "ComfyUI 图片与生成参数图床"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi>=0.115,<1.0",
+    "uvicorn[standard]>=0.30,<1.0",
+    "jinja2>=3.1,<4.0",
+    "python-multipart>=0.0.9,<1.0",
+    "pillow>=10.0,<14.0",
+    "cryptography>=42.0,<46.0",
+    "maxminddb>=2.6,<3.0",
+    "httpx>=0.27,<1.0",
+    "boto3>=1.35,<2.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0,<9.0", "httpx>=0.27,<1.0"]
+
+[project.scripts]
+ostensory = "app.cli:main"
+
+[tool.setuptools]
+packages = ["app", "app.metadata"]
+
+[tool.setuptools.package-data]
+app = [
+    "schema.sql",
+    "templates/*.html",
+    "templates/admin/*.html",
+    "templates/partials/*.html",
+    "static/*.css",
+    "static/*.js",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

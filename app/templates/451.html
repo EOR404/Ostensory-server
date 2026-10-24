@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block title %}{{ t('region.title') }} · {{ settings.site_name }}{% endblock %}
+{% block content %}
+<section class="error-page">
+  <p class="eyebrow">HTTP 451</p>
+  <h1>{{ t('region.title') }}</h1>
+  <p>{{ message or t('region.message') }}</p>
+  <p class="muted">{{ t('region.hint') }}</p>
+  <a class="button" href="/">{{ t('error.back_home') }}</a>
+</section>
+{% endblock %}

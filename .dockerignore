@@ -1,0 +1,13 @@
+.git
+.gitignore
+.venv
+tests
+data
+deploy
+__pycache__
+*.pyc
+*.pyo
+.pytest_cache
+requirements-dev.txt
+*.log
+backups

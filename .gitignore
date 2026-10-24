@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+
+# Local data and secrets
+data/
+*.sqlite3
+*.sqlite3-*
+master.key
+secret.key
+.env
+.env.*
+backups/
+
+# Tests and development-only files
+tests/
+.pytest_cache/
+.coverage
+htmlcov/
+requirements-dev.txt
+
+# Build output
+build/
+dist/
+*.zip
+*.log
+
+# Editors / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

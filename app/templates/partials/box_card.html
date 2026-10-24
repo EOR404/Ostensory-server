@@ -1,0 +1,16 @@
+<a class="box-card" href="/boxes/{{ box.id }}">
+  <div class="box-cover">
+    {% if box.cover %}
+      <img src="{{ media_url(box.cover.id, 'thumb', box.cover.sha256) }}" alt="" loading="lazy">
+    {% else %}
+      <span class="box-glyph" aria-hidden="true">▤</span>
+    {% endif %}
+    <span class="box-card-count">{{ t('boxes.image_count', count=box.direct_count) }}</span>
+    {% if box.has_password %}<span class="box-card-count box-card-lock">🔒 {{ t('boxes.locked') }}</span>{% endif %}
+  </div>
+  <div class="box-info">
+    <h3>{{ box.name }}</h3>
+    {% if box.description %}<p>{{ box.description }}</p>{% endif %}
+    <p class="box-meta">{{ t('boxes.album_count', count=box.album_count) }} · {{ t('boxes.image_count', count=box.direct_count) }}</p>
+  </div>
+</a>

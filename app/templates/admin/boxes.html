@@ -1,0 +1,43 @@
+{% extends "admin/base_admin.html" %}
+{% block title %}匣子 · 管理后台{% endblock %}
+{% block content %}
+<div class="page-title"><div><p class="eyebrow">BOXES</p><h1>匣子</h1><p class="muted">匣子是相册之上的一层收藏夹，可以同时放入相册和直接图片。</p></div></div>
+
+<section class="panel">
+  <div class="panel-head"><h2>新建匣子</h2></div>
+  <form method="post" action="{{ admin_url('/boxes') }}" class="stack-form" autocomplete="off">
+    <input type="hidden" name="csrf" value="{{ csrf_token }}">
+    <div class="two-col">
+      <label>名称<input name="name" required maxlength="80" autocomplete="off"></label>
+      <label>描述<input name="description" maxlength="2000" autocomplete="off"></label>
+      <label>访问密码（可留空）<input type="password" name="password" autocomplete="new-password" data-lpignore="true" data-1p-ignore="true"></label>
+    </div>
+    <button class="button" type="submit">创建匣子</button>
+  </form>
+</section>
+
+<section class="panel">
+  <div class="panel-head"><h2>全部匣子</h2><span class="muted small">{{ boxes|length }} 个</span></div>
+  <div class="table-wrap">
+    <table class="table">
+      <thead><tr><th>匣子</th><th>相册</th><th>直接图片</th><th>操作</th></tr></thead>
+      <tbody>
+        {% for box in boxes %}
+        <tr>
+          <td>
+            <div class="box-table-name">
+              {% if box.cover %}<img src="{{ media_url(box.cover.id, 'thumb', box.cover.sha256) }}" alt="" loading="lazy">{% else %}<span class="box-table-glyph">▤</span>{% endif %}
+              <span><a href="{{ admin_url('/boxes/' ~ box.id) }}">{{ box.name }}</a><small class="muted">#{{ box.id }}{% if box.access_password_hash %} · 🔒 已加密{% endif %}</small></span>
+            </div>
+          </td>
+          <td>{{ box.album_count }}</td>
+          <td>{{ box.direct_count }}</td>
+          <td class="actions"><a href="{{ admin_url('/boxes/' ~ box.id) }}">编辑</a></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% if not boxes %}<p class="muted">还没有匣子。创建后可以在相册和图片编辑页把它们放进来。</p>{% endif %}
+</section>
+{% endblock %}

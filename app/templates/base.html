@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="{{ language_code }}">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}{{ settings.site_name }}{% endblock %}</title>
+  <meta name="description" content="{{ settings.site_description if lang == 'zh' else t('site.subtitle') }}">
+  <meta name="theme-color" content="{{ settings.accent_color or '#d7a76c' }}">
+  <link rel="icon" href="{{ settings.site_icon_url or '/static/favicon.svg?v=1' }}">
+  <script>
+    (function () {
+      try {
+        var saved = window.localStorage.getItem("ostensory.theme");
+        document.documentElement.setAttribute("data-theme", saved === "light" ? "light" : "dark");
+      } catch (error) {
+        document.documentElement.setAttribute("data-theme", "dark");
+      }
+    })();
+  </script>
+  <link rel="stylesheet" href="/static/public.css?v=23">
+  <style>:root { --accent: {{ settings.accent_color or '#d7a76c' }}; }</style>
+  {% if settings.custom_css %}<style>{{ settings.custom_css|safe }}</style>{% endif %}
+  {% if settings.custom_head_html %}{{ settings.custom_head_html|safe }}{% endif %}
+  <script>window.OSTENSORY_I18N = {{ js_i18n|tojson }}; window.OSTENSORY_LANG = {{ lang|tojson }};</script>
+  {% block head %}{% endblock %}
+</head>
+{% set cursor_style = settings.cursor_style if settings.cursor_style in ['ink', 'ring', 'cross', 'diamond', 'custom'] else 'default' %}
+<body class="public-body{% block body_class %}{% endblock %}{% if cursor_style not in ['default', 'custom'] %} cursor-{{ cursor_style }}{% endif %}"{% if cursor_style == 'custom' and cursor_css_value %} style="--site-cursor: {{ cursor_css_value }}; --site-cursor-pointer: {{ cursor_css_value }};"{% endif %}>
+  <header class="site-header">
+    <a class="brand" href="/">
+      {% if settings.site_icon_url %}<img class="brand-icon" src="{{ settings.site_icon_url }}" alt="">{% else %}<span class="brand-mark">◒</span>{% endif %}
+      <span class="brand-text">{{ settings.site_name }}</span>
+    </a>
+    <nav class="site-nav" aria-label="{{ t('nav.main') }}">
+      <a href="/" {% if current_path == '/' %}class="active"{% endif %}>{{ t('nav.home') }}</a>
+      <a href="/boxes" {% if current_path == '/boxes' or current_path.startswith('/boxes/') %}class="active"{% endif %}>{{ t('nav.boxes') }}</a>
+      <a href="/albums" {% if current_path == '/albums' or current_path.startswith('/albums/') %}class="active"{% endif %}>{{ t('nav.albums') }}</a>
+      <a href="/browse" {% if current_path == '/browse' %}class="active"{% endif %}>{{ t('nav.all_images') }}</a>
+      {% if settings.about_enabled %}<a href="/about" {% if current_path == '/about' %}class="active"{% endif %}>{{ t('nav.about') }}</a>{% endif %}
+      {% if settings.guest_upload_enabled == '1' %}<a href="/upload" {% if current_path == '/upload' %}class="active"{% endif %}>{{ t('nav.upload') }}</a>{% endif %}
+      {% if settings.stats_enabled == '1' %}<a href="/stats" {% if current_path == '/stats' %}class="active"{% endif %}>{{ t('nav.stats') }}</a>{% endif %}
+    </nav>
+    <form class="search-form" action="/" method="get" role="search">
+      <input type="search" name="q" value="{{ search|default('') }}" placeholder="{{ t('search.placeholder') }}" maxlength="200" aria-label="{{ t('search.label') }}" title="{{ t('search.title') }}">
+      <button type="submit" aria-label="{{ t('search.button') }}">→</button>
+    </form>
+    <div class="header-tools">
+      <a class="header-tool language-toggle" href="/language/{{ 'en' if lang == 'zh' else 'zh' }}?next={{ (request.url.path ~ ('?' ~ request.url.query if request.url.query else ''))|urlencode }}" aria-label="{{ t('language.switch') }}" title="{{ t('language.switch') }}">{{ t('language.next') }}</a>
+      <button class="header-tool theme-toggle" type="button" data-theme-toggle aria-label="{{ t('theme.toggle') }}" title="{{ t('theme.toggle') }}">
+        <span class="theme-symbol theme-sun" aria-hidden="true">☀</span>
+        <span class="theme-symbol theme-moon" aria-hidden="true">☾</span>
+      </button>
+    </div>
+  </header>
+
+  {% if flash %}
+  <div class="notice notice-ok" role="status">{{ flash }}</div>
+  {% endif %}
+  {% if error %}
+  <div class="notice notice-error" role="alert">{{ error }}</div>
+  {% endif %}
+
+  <main class="site-main">
+    {% block content %}{% endblock %}
+  </main>
+
+  <footer class="site-footer">
+    <div class="footer-left">
+      {% if settings.footer_icp %}
+      <a class="footer-icp" href="{{ settings.footer_icp_url or 'https://beian.miit.gov.cn/' }}" target="_blank" rel="noopener noreferrer">{{ settings.footer_icp }}</a>
+      {% endif %}
+      {% if settings.footer_html %}<div class="footer-custom">{{ settings.footer_html|safe }}</div>{% endif %}
+    </div>
+    <div class="footer-right">
+      <span class="footer-powered">{{ t('footer.powered') }}</span>
+    </div>
+  </footer>
+  <button class="back-to-top" type="button" data-back-to-top aria-label="{{ t('fab.back_top') }}" title="{{ t('fab.title') }}">
+    <span class="back-to-top-arrow" aria-hidden="true">↑</span>
+  </button>
+  <script src="/static/public.js?v=15" defer></script>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

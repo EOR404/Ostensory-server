@@ -1,0 +1,62 @@
+{% extends "admin/base_admin.html" %}
+{% block title %}GeoIP · 管理后台{% endblock %}
+{% block content %}
+<div class="page-title"><div><p class="eyebrow">REGION CONTROL</p><h1>GeoIP / 地区</h1></div></div>
+
+<div class="admin-grid-2">
+  <section class="panel">
+    <div class="panel-head"><h2>数据库状态</h2></div>
+    {% if status.available %}
+    <p class="status-line ok">可用</p>
+    {% else %}
+    <p class="status-line danger">不可用</p>
+    {% endif %}
+    <dl class="kv">
+      <div><dt>数据库</dt><dd><code class="break">{{ status.database }}</code></dd></div>
+      <div><dt>覆盖规则</dt><dd>{{ status.overrides }} 条</dd></div>
+      {% if status.error %}<div><dt>错误</dt><dd>{{ status.error }}</dd></div>{% endif %}
+    </dl>
+    <p class="muted small">支持 MaxMind 兼容的 MMDB（使用合法授权来源；也可选用下方 DB-IP Lite）。也可以用 <code>data/geoip/overrides.json</code> 写固定 CIDR 映射，例如 <code>{"1.2.3.0/24":"CN"}</code>。</p>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head"><h2>当前请求</h2></div>
+    <dl class="kv">
+      <div><dt>识别 IP</dt><dd><code>{{ current_ip }}</code></dd></div>
+      <div><dt>国家</dt><dd>{{ current_country or '未知' }}</dd></div>
+      <div><dt>来源</dt><dd>{{ current_source }}</dd></div>
+    </dl>
+    <form method="get" action="{{ admin_url('/geoip') }}" class="inline-form">
+      <label>测试 IP<input name="test_ip" value="{{ test_ip }}" placeholder="8.8.8.8"></label>
+      <button class="button ghost" type="submit">查询</button>
+    </form>
+    {% if lookup %}
+    <p>查询结果：<strong>{{ lookup.ip }}</strong> → {{ lookup.country or '未知' }}（{{ lookup.source }}）</p>
+    {% endif %}
+  </section>
+</div>
+
+<section class="panel">
+  <div class="panel-head"><h2>公开数据库更新</h2><span class="muted small">可选，需要先在设置页授权</span></div>
+  {% if public_update_enabled %}
+  <p class="muted small">将尝试从 <a href="https://db-ip.com/db/download/ip-to-country-lite" target="_blank" rel="noreferrer">DB-IP Lite</a> 下载当月（或最近月份）的国家数据库，校验后原子替换当前文件。来源许可为 CC BY 4.0，使用时请保留署名。</p>
+  <form method="post" action="{{ admin_url('/geoip/update') }}" data-confirm="确定从 DB-IP Lite 下载并替换当前 GeoIP 数据库吗？">
+    <input type="hidden" name="csrf" value="{{ csrf_token }}">
+    <button class="button" type="submit">立即拉取并更新</button>
+  </form>
+  {% else %}
+  <p class="muted small">自动拉取未开启。请到 <a href="{{ admin_url('/settings') }}">设置</a> 勾选“允许从 DB-IP Lite 拉取公开国家数据库”，再回到这里手动更新。系统不会静默下载第三方文件。</p>
+  {% endif %}
+</section>
+
+<section class="panel">
+  <div class="panel-head"><h2>怎么配置</h2></div>
+  <ol class="plain-list">
+    <li>下载合法的离线 MMDB 国家数据库，放到服务器上。</li>
+    <li>默认读取 <code>data/geoip/dbip-country-lite.mmdb</code>；也可设置环境变量 <code>OSTENSORY_GEOIP_DB=/path/to/Country.mmdb</code>，重启服务。</li>
+    <li>回到本页确认状态为“可用”，再用测试 IP 检查结果。</li>
+    <li>在设置里填写 NSFW 默认屏蔽国家（默认 CN），或在图片/相册里设置显式规则。</li>
+  </ol>
+  <p class="muted small">没有数据库时，对于配置了国家限制的内容会执行失败关闭（拒绝），避免把 NSFW 内容误发给受限制地区。</p>
+</section>
+{% endblock %}

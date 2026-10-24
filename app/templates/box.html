@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block body_class %} page-box{% endblock %}
+{% block title %}{{ box.name }} · {{ settings.site_name }}{% endblock %}
+{% block content %}
+<nav class="breadcrumb" aria-label="{{ t('box.breadcrumb') }}">
+  <a href="/">{{ t('nav.home') }}</a><span>/</span>
+  <a href="/boxes">{{ t('nav.boxes') }}</a><span>/</span>
+  <span>{{ box.name }}</span>
+</nav>
+
+<section class="page-heading box-heading">
+  <p class="eyebrow">{{ t('box.eyebrow') }}</p>
+  <h1>{{ box.name }}</h1>
+  {% if box.description %}<p class="muted">{{ box.description }}</p>{% endif %}
+  <p class="muted">{{ t('boxes.album_count', count=albums|length) }} · {{ t('boxes.image_count', count=assets|length) }}</p>
+</section>
+
+{% if albums %}
+<section class="section">
+  <div class="section-heading"><h2>{{ t('box.albums_heading') }}</h2></div>
+  <div class="album-grid compact">
+    {% for album in albums %}
+    <a class="album-card{% if album.nsfw_effective and settings.blur_nsfw %} is-nsfw{% endif %}" href="/albums/{{ album.id }}">
+      <div class="album-cover{% if album.locked %} locked{% endif %}">
+        {% if album.cover %}<img src="{{ media_url(album.cover.id, 'thumb', album.cover.sha256) }}" alt="" loading="lazy">
+        {% elif album.locked %}<span class="lock-glyph">🔒</span>
+        {% else %}<span class="empty-glyph">{{ album.name[:1] }}</span>{% endif %}
+        {% if album.nsfw_effective %}<span class="badge badge-nsfw">{{ t('common.nsfw') }}</span>{% endif %}
+      </div>
+      <div class="album-info"><h3>{{ album.name }}</h3><p>{{ t('common.images', count=album.asset_count) }}{% if album.locked %} · {{ t('common.requires_password') }}{% endif %}</p></div>
+    </a>
+    {% endfor %}
+  </div>
+</section>
+{% endif %}
+
+<section class="section">
+  <div class="section-heading"><h2>{{ t('box.direct_images_heading') }}</h2></div>
+  {% if assets %}
+  <div class="asset-grid">
+    {% set gallery_source = 'all' %}
+    {% for asset in assets %}{% include "partials/asset_card.html" %}{% endfor %}
+  </div>
+  {% else %}
+  <div class="empty-state"><p class="empty-title">{{ t('box.empty') }}</p></div>
+  {% endif %}
+</section>
+{% endblock %}

@@ -1,0 +1,131 @@
+{% extends "admin/base_admin.html" %}
+{% block title %}编辑相册 · 管理后台{% endblock %}
+{% block content %}
+<nav class="breadcrumb"><a href="{{ admin_url('/albums') }}">相册</a><span>/</span><span>{{ album.name }}</span></nav>
+<div class="page-title">
+  <div><p class="eyebrow">ALBUM #{{ album.id }}</p><h1>{{ album.name }}</h1><p class="muted">{{ album.path }}</p></div>
+  <div class="inline-actions">
+    <a class="button ghost" href="{{ admin_url('/assets') }}?album_id={{ album.id }}">批量管理图片</a>
+    <a class="button ghost" href="/albums/{{ album.id }}" target="_blank" rel="noopener">前台查看</a>
+  </div>
+</div>
+
+<div class="admin-grid-2">
+  <section class="panel">
+    <div class="panel-head"><h2>相册设置</h2></div>
+    <form method="post" action="{{ admin_url('/albums/' ~ album.id) }}" class="stack-form" autocomplete="off">
+      <input type="hidden" name="csrf" value="{{ csrf_token }}">
+      <div class="two-col">
+        <label>名称<input name="name" value="{{ album.name }}" required maxlength="80"></label>
+        <label>上级相册
+          <select name="parent_id">
+            <option value="">根目录</option>
+            {% for choice in choices %}<option value="{{ choice.id }}" {% if album.parent_id == choice.id %}selected{% endif %}>{{ '—' * choice.depth }} {{ choice.name }}</option>{% endfor %}
+          </select>
+        </label>
+        <label>所属匣子
+          <select name="box_id">
+            <option value="">不放入匣子</option>
+            {% for box in boxes %}<option value="{{ box.id }}" {% if album.box_id == box.id %}selected{% endif %}>{{ box.name }}</option>{% endfor %}
+          </select>
+        </label>
+      </div>
+      <label>描述<textarea name="description" rows="3" maxlength="2000">{{ album.description }}</textarea></label>
+      <div class="two-col">
+        <label>封面图片
+          <select name="cover_asset_id">
+            <option value="">自动（最新图片）</option>
+            {% for asset in assets %}<option value="{{ asset.id }}" {% if album.cover_asset_id == asset.id %}selected{% endif %}>#{{ asset.id }} · {{ asset.title or asset.original_name }}</option>{% endfor %}
+          </select>
+        </label>
+        {% if settings.experimental_features == '1' %}
+        <label>地区规则
+          <select name="region_mode">
+            <option value="inherit" {% if album.region_mode == 'inherit' %}selected{% endif %}>继承上级</option>
+            <option value="block" {% if album.region_mode == 'block' %}selected{% endif %}>屏蔽下列国家</option>
+            <option value="allow" {% if album.region_mode == 'allow' %}selected{% endif %}>仅允许下列国家</option>
+          </select>
+        </label>
+        {% endif %}
+      </div>
+      <div class="two-col">
+        {% if settings.experimental_features == '1' %}
+        <label>国家代码<input name="region_countries" value="{{ album.region_countries|country_list }}" placeholder="CN, US" autocomplete="off" spellcheck="false" data-lpignore="true"></label>
+        {% endif %}
+        <label class="check"><input type="checkbox" name="nsfw" value="1" {% if album.nsfw %}checked{% endif %}> 整个相册标记 NSFW</label>
+      </div>
+
+      <fieldset class="fieldset">
+        <legend>访客上传容量</legend>
+        <p class="muted small">只统计访客从这个相册页面上传的图片；管理员和客户端上传的图片不占用额度，也不会被循环销毁。0 表示本相册不单独限制，但仍受总容量池约束。</p>
+        <div class="two-col">
+          <label>本相册容量（MB）<input type="number" name="guest_quota_mb" value="{{ album.guest_quota_mb }}" min="0" max="1048576"></label>
+          <div class="muted small">
+            当前访客已用 {{ guest_capacity.used_mb }} MB。
+            {% if guest_capacity.unlimited %}
+            未设置相册上限。
+            {% else %}
+            上限 {{ guest_capacity.limit_mb }} MB，剩余 {{ guest_capacity.remaining_mb }} MB。
+            {% endif %}
+          </div>
+        </div>
+      </fieldset>
+
+      <fieldset class="fieldset">
+        <legend>访问密码</legend>
+        <p class="muted small">{% if album.access_password_hash %}已设置相册密码。{% else %}未设置相册密码。{% endif %}</p>
+        <div class="two-col">
+          <label>新密码<input type="password" name="password" autocomplete="new-password" placeholder="留空不修改" data-lpignore="true" data-1p-ignore="true" readonly data-unlock-autofill></label>
+          <label class="check"><input type="checkbox" name="clear_password" value="1"> 清除密码</label>
+        </div>
+      </fieldset>
+
+      <fieldset class="fieldset">
+        <legend>落盘加密</legend>
+        <p class="muted small">会递归处理本相册和子相册里的所有图片。加密后如果丢失 <code>data/master.key</code>，文件无法恢复。</p>
+        <label>操作
+          <select name="encryption_action">
+            <option value="keep">保持不变</option>
+            <option value="encrypt">加密全部图片</option>
+            <option value="decrypt">解密全部图片</option>
+          </select>
+        </label>
+      </fieldset>
+      <button class="button" type="submit">保存相册</button>
+    </form>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head"><h2>相册信息</h2></div>
+    <dl class="kv">
+      <div><dt>路径</dt><dd><code>{{ album.path }}</code></dd></div>
+      <div><dt>直接图片</dt><dd>{{ assets|length }}</dd></div>
+      <div><dt>访客容量</dt><dd>{% if guest_capacity.unlimited %}不限（已用 {{ guest_capacity.used_mb }} MB）{% else %}{{ guest_capacity.used_mb }} / {{ guest_capacity.limit_mb }} MB{% endif %}</dd></div>
+      <div><dt>NSFW 继承</dt><dd>{{ '是' if effective.nsfw else '否' }}</dd></div>
+      <div><dt>密码来源</dt><dd>{{ effective.password_scope or '无' }}</dd></div>
+      {% if settings.experimental_features == '1' %}<div><dt>地区来源</dt><dd>{{ effective.region_source }}</dd></div>{% endif %}
+    </dl>
+    <p class="muted small">相册密码会被子相册和图片继承；图片自己的密码优先。</p>
+  </section>
+</div>
+
+<section class="panel">
+  <div class="panel-head"><h2>相册内图片</h2><a href="{{ admin_url('/assets?album_id=' ~ album.id) }}">批量管理 →</a></div>
+  {% if assets %}
+  <div class="mini-grid">
+    {% for asset in assets %}
+    <a href="{{ admin_url('/assets/' ~ asset.id) }}"><img src="{{ media_url(asset.id, 'thumb', asset.sha256) }}" alt="" loading="lazy"><span>{{ asset.title or asset.original_name }}</span></a>
+    {% endfor %}
+  </div>
+  {% else %}<p class="muted">暂无图片。</p>{% endif %}
+</section>
+
+<section class="panel danger-panel">
+  <div class="panel-head"><h2>删除相册</h2></div>
+  <p class="muted">只有空相册（没有子相册、没有图片）可以删除，避免误删作品。</p>
+  <form method="post" action="{{ admin_url('/albums/' ~ album.id ~ '/delete') }}" data-confirm="确定删除空相册 {{ album.name }}？">
+    <input type="hidden" name="csrf" value="{{ csrf_token }}">
+    <button class="button danger" type="submit">删除相册</button>
+  </form>
+</section>
+{% endblock %}

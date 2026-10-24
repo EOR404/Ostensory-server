@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block body_class %}{% if infinite %} has-waterfall{% endif %}{% endblock %}
+{% block title %}{{ t('browse.title') }} · {{ settings.site_name }}{% endblock %}
+{% block content %}
+<section class="page-heading browse-head-row">
+  <div>
+    <p class="eyebrow">{{ t('browse.eyebrow') }}</p>
+    <h1>{{ t('browse.title') }}</h1>
+    <p class="muted">{{ t('browse.total', count=total) }}{% if infinite %} · {{ t('browse.scroll_more') }}{% else %} · {{ t('browse.page', page=page, pages=pages) }}{% endif %}</p>
+  </div>
+  <div class="layout-switch" role="group" aria-label="{{ t('browse.layout') }}">
+    <button type="button" data-browse-layout="grid" class="{% if browse_layout == 'grid' %}is-active{% endif %}" aria-pressed="{{ 'true' if browse_layout == 'grid' else 'false' }}">{{ t('browse.grid') }}</button>
+    <button type="button" data-browse-layout="masonry" class="{% if browse_layout == 'masonry' %}is-active{% endif %}" aria-pressed="{{ 'true' if browse_layout == 'masonry' else 'false' }}">{{ t('browse.masonry') }}</button>
+  </div>
+</section>
+
+{% if assets %}
+<div class="asset-grid{% if browse_layout == 'masonry' %} is-masonry{% endif %}" data-browse-grid data-layout="{{ browse_layout }}"{% if infinite %} data-infinite-feed data-page="{{ page }}" data-pages="{{ pages }}" data-per-page="{{ per_page }}" data-feed-url="/api/feed" data-blur-nsfw="{{ '1' if settings.blur_nsfw else '0' }}"{% endif %}>
+  {% for asset in assets %}
+    {% include "partials/asset_card.html" %}
+  {% endfor %}
+</div>
+{% else %}
+<div class="empty-state"><p class="empty-title">{{ t('browse.empty') }}</p></div>
+{% endif %}
+
+{% if infinite %}
+<div class="feed-footer" data-infinite-footer>
+  <button class="button ghost" type="button" data-load-more{% if page >= pages %} hidden{% endif %}>{{ t('browse.load_more') }}</button>
+  <p class="muted small" data-feed-status>{% if page >= pages %}{{ t('browse.end') }}{% else %}{{ t('browse.scroll_more') }}{% endif %}</p>
+</div>
+{% elif pages > 1 %}
+<nav class="pagination" aria-label="{{ t('browse.pagination') }}">
+  {% if page > 1 %}<a class="button ghost" href="/browse?page={{ page - 1 }}&layout={{ browse_layout }}">← {{ t('common.previous') }}</a>{% endif %}
+  <span>{{ t('browse.page', page=page, pages=pages) }}</span>
+  {% if page < pages %}<a class="button ghost" href="/browse?page={{ page + 1 }}&layout={{ browse_layout }}">{{ t('common.next') }} →</a>{% endif %}
+</nav>
+{% endif %}
+{% endblock %}

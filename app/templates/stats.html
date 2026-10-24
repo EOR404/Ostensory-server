@@ -1,0 +1,123 @@
+{% extends "base.html" %}
+{% block body_class %} page-stats{% endblock %}
+{% block title %}{{ t('stats.title') }} · {{ settings.site_name }}{% endblock %}
+{% block content %}
+<section class="page-heading stats-heading">
+  <p class="eyebrow">{{ t('stats.eyebrow') }}</p>
+  <h1>{{ t('stats.heading') }}</h1>
+  <p class="muted">{{ t('stats.subtitle') }}</p>
+</section>
+
+{% set any_panel = stats_show.counts or stats_show.storage or stats_show.metadata or stats_show.activity or stats_show.albums or stats_show.guest %}
+{% if any_panel %}
+<div class="stats-grid">
+  {% if stats_show.counts %}
+  <article class="stat-card">
+    <span class="stat-label">{{ t('stats.images') }}</span>
+    <strong>{{ stats.images }}</strong>
+    <small>{{ t('stats.valid_images') }}</small>
+  </article>
+  <article class="stat-card">
+    <span class="stat-label">{{ t('stats.albums') }}</span>
+    <strong>{{ stats.albums }}</strong>
+    <small>{{ t('stats.album_count') }}</small>
+  </article>
+  {% endif %}
+  {% if stats_show.storage %}
+  <article class="stat-card">
+    <span class="stat-label">{{ t('stats.storage') }}</span>
+    <strong>{{ stats.storage|filesize }}</strong>
+    <small>{{ t('stats.dedup') }}</small>
+  </article>
+  <article class="stat-card">
+    <span class="stat-label">{{ t('stats.asset_bytes') }}</span>
+    <strong>{{ stats.asset_bytes|filesize }}</strong>
+    <small>{{ t('stats.asset_count') }}</small>
+  </article>
+  {% endif %}
+  {% if stats_show.activity %}
+  <article class="stat-card">
+    <span class="stat-label">{{ t('stats.recent_7') }}</span>
+    <strong>{{ stats.recent_7 }}</strong>
+    <small>{{ t('stats.recent_30', count=stats.recent_30) }}</small>
+  </article>
+  <article class="stat-card">
+    <span class="stat-label">{{ t('stats.latest') }}</span>
+    <strong class="stat-date">{{ stats.latest.strftime('%Y-%m-%d') if stats.latest else '—' }}</strong>
+    <small>{{ t('stats.latest_hint') }}</small>
+  </article>
+  {% endif %}
+  {% if stats_show.metadata %}
+  <article class="stat-card">
+    <span class="stat-label">{{ t('stats.lora') }}</span>
+    <strong>{{ stats.lora_total }}</strong>
+    <small>{{ t('stats.lora_hint') }}</small>
+  </article>
+  <article class="stat-card">
+    <span class="stat-label">{{ t('stats.models') }}</span>
+    <strong>{{ stats.models }}</strong>
+    <small>{{ t('stats.models_hint') }}</small>
+  </article>
+  {% endif %}
+</div>
+
+{% if stats_show.metadata %}
+<section class="stats-section">
+  <div class="stats-section-head"><h2>{{ t('stats.metadata_coverage') }}</h2><span class="muted small">{{ t('stats.by_images') }}</span></div>
+  <div class="stats-bars">
+    {% set total = stats.images if stats.images else 1 %}
+    <div class="stats-bar-row">
+      <span>{{ t('stats.comfyui') }}</span>
+      <div class="stats-bar"><i style="width: {{ (stats.comfy * 100 / total)|round(1) }}%"></i></div>
+      <strong>{{ stats.comfy }}</strong>
+    </div>
+    <div class="stats-bar-row">
+      <span>{{ t('stats.a1111') }}</span>
+      <div class="stats-bar"><i style="width: {{ (stats.a1111 * 100 / total)|round(1) }}%"></i></div>
+      <strong>{{ stats.a1111 }}</strong>
+    </div>
+    <div class="stats-bar-row">
+      <span>{{ t('stats.with_prompt') }}</span>
+      <div class="stats-bar"><i style="width: {{ (stats.with_prompt * 100 / total)|round(1) }}%"></i></div>
+      <strong>{{ stats.with_prompt }}</strong>
+    </div>
+    <div class="stats-bar-row">
+      <span>{{ t('stats.no_metadata') }}</span>
+      <div class="stats-bar"><i class="is-muted" style="width: {{ (stats.no_meta * 100 / total)|round(1) }}%"></i></div>
+      <strong>{{ stats.no_meta }}</strong>
+    </div>
+  </div>
+  <p class="muted small">{{ t('stats.base_models', count=stats.base_models) }}</p>
+</section>
+{% endif %}
+
+{% if stats_show.albums and stats.top_albums %}
+<section class="stats-section">
+  <div class="stats-section-head"><h2>{{ t('stats.album_ranking') }}</h2><span class="muted small">{{ t('stats.by_public_images') }}</span></div>
+  <div class="stats-album-list">
+    {% for item in stats.top_albums %}
+    <div class="stats-album-row">
+      <span class="stats-rank">{{ '%02d'|format(loop.index) }}</span>
+      <span class="stats-album-name">{{ item.name }}</span>
+      <span class="stats-album-count">{{ t('common.image_short', count=item.count) }}</span>
+    </div>
+    {% endfor %}
+  </div>
+</section>
+{% endif %}
+
+{% if stats_show.guest %}
+<section class="stats-section">
+  <div class="stats-section-head"><h2>{{ t('stats.guest_uploads') }}</h2><span class="muted small">{{ t('stats.guest_hint') }}</span></div>
+  <div class="stats-inline">
+    <div><strong>{{ stats.guest_count }}</strong><span>{{ t('stats.guest_images') }}</span></div>
+    <div><strong>{{ stats.guest_bytes|filesize }}</strong><span>{{ t('stats.guest_bytes') }}</span></div>
+  </div>
+</section>
+{% endif %}
+
+<p class="stats-footnote muted small">{{ t('stats.generated', time=stats.updated_at.strftime('%Y-%m-%d %H:%M')) }}</p>
+{% else %}
+<div class="empty-state"><p class="empty-title">{{ t('stats.disabled_title') }}</p><p>{{ t('stats.disabled_hint') }}</p></div>
+{% endif %}
+{% endblock %}

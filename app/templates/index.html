@@ -1,0 +1,97 @@
+{% extends "base.html" %}
+{% block body_class %}{% if show_waterfall or search %} has-waterfall{% endif %}{% endblock %}
+{% block title %}{{ page_title or (settings.site_name ~ ' · ' ~ (t('site.subtitle') if lang == 'en' else settings.site_subtitle)) }}{% endblock %}
+{% block content %}
+  {% if not search %}
+  <h1 class="visually-hidden">{{ settings.site_name }}</h1>
+  {% else %}
+  <section class="page-heading">
+    <p class="eyebrow">{{ t('home.search_eyebrow') }}</p>
+    <h1>{{ t('home.search_heading', query=search) }}</h1>
+    <p class="muted">{{ t('home.search_results', count=total) }} <a href="/">{{ t('home.back_home') }}</a></p>
+  </section>
+  {% endif %}
+
+  {% if show_carousel and carousel %}
+  <section class="home-carousel" data-carousel data-interval="{{ settings.home_carousel_interval * 1000 }}">
+    <div class="carousel-track">
+      {% for slide in carousel %}
+      <a class="carousel-slide{% if loop.first %} is-active{% endif %}{% if slide.nsfw and settings.blur_nsfw %} is-nsfw{% endif %}" href="{{ slide.url }}" data-slide>
+        {% if slide.image %}<img src="{{ slide.image }}" alt="{{ slide.title }}" loading="{% if loop.first %}eager{% else %}lazy{% endif %}">
+        {% else %}<span class="carousel-empty">{{ '🔒' if slide.locked else '◒' }}</span>{% endif %}
+        <span class="carousel-caption"><strong>{{ slide.title }}</strong><small>{{ slide.subtitle }}</small></span>
+      </a>
+      {% endfor %}
+    </div>
+    {% if carousel|length > 1 %}
+    <div class="carousel-controls">
+      <button type="button" data-carousel-prev aria-label="{{ t('home.carousel_previous') }}">←</button>
+      <div class="carousel-dots">{% for slide in carousel %}<button type="button" data-carousel-dot="{{ loop.index0 }}" aria-label="{{ t('home.carousel_dot', index=loop.index) }}"></button>{% endfor %}</div>
+      <button type="button" data-carousel-next aria-label="{{ t('home.carousel_next') }}">→</button>
+    </div>
+    {% endif %}
+  </section>
+  {% endif %}
+
+  {% if show_albums and boxes and not search %}
+  <section class="section">
+    <div class="section-heading">
+      <h2>{{ t('home.boxes') }}</h2>
+      <a href="/boxes" class="text-link">{{ t('common.view_all') }}</a>
+    </div>
+    <div class="box-grid">
+      {% for box in boxes %}{% include "partials/box_card.html" %}{% endfor %}
+    </div>
+  </section>
+  {% endif %}
+
+  {% if show_albums and albums and not search %}
+  <section class="section">
+    <div class="section-heading">
+      <h2>{{ t('home.albums') }}</h2>
+      <a href="/albums" class="text-link">{{ t('common.view_all') }}</a>
+    </div>
+    <div class="album-grid">
+      {% for album in albums %}
+      <a class="album-card{% if album.nsfw_effective %} is-nsfw{% endif %}" href="/albums/{{ album.id }}">
+        <div class="album-cover{% if album.locked %} locked{% endif %}">
+          {% if album.cover %}
+            <img src="{{ media_url(album.cover.id, 'thumb', album.cover.sha256) }}" alt="" loading="lazy">
+          {% elif album.locked %}
+            <span class="lock-glyph">🔒</span>
+          {% else %}
+            <span class="empty-glyph">{{ album.name[:1] }}</span>
+          {% endif %}
+          {% if album.nsfw_effective %}<span class="badge badge-nsfw">{{ t('common.nsfw') }}</span>{% endif %}
+        </div>
+        <div class="album-info">
+          <h3>{{ album.name }}</h3>
+          <p>{{ t('common.images', count=album.asset_count) }}{% if album.locked %} · {{ t('common.requires_password') }}{% endif %}</p>
+        </div>
+      </a>
+      {% endfor %}
+    </div>
+  </section>
+  {% endif %}
+
+  {% if show_waterfall or search %}
+  <section class="section">
+    <div class="section-heading">
+      <h2>{% if search %}{{ t('home.results') }}{% else %}{{ t('home.featured') if settings.home_waterfall_source == 'selected' and settings.home_selected_ids else (t('home.all_images') if settings.home_waterfall_source == 'all' else t('home.recent')) }}{% endif %}</h2>
+      {% if not search and assets %}<a href="/browse" class="text-link">{{ t('common.browse_all') }}</a>{% endif %}
+    </div>
+    {% if assets %}
+    <div class="asset-grid{% if settings.home_layout == 'masonry' %} is-masonry{% endif %}">
+      {% for asset in assets %}
+        {% include "partials/asset_card.html" %}
+      {% endfor %}
+    </div>
+    {% else %}
+    <div class="empty-state">
+      <p class="empty-title">{% if search %}{{ t('home.no_match') }}{% else %}{{ t('home.no_images') }}{% endif %}</p>
+      <p>{% if search %}{{ t('home.no_match_hint') }}{% else %}{{ t('home.empty_hint') }}{% endif %}</p>
+    </div>
+    {% endif %}
+  </section>
+  {% endif %}
+{% endblock %}

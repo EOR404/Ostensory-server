@@ -1,0 +1,364 @@
+{% extends "admin/base_admin.html" %}
+{% block title %}设置 · 管理后台{% endblock %}
+{% block content %}
+<div class="page-title"><div><p class="eyebrow">SETTINGS</p><h1>设置</h1><p class="muted">站点外观、首页、关于页面、页脚和自定义内容都集中在这里。</p></div></div>
+
+{% if values.experimental_features == '1' and not geo_status.available %}
+<div class="admin-notice warn">GeoIP 当前不可用。国家/地区规则会按失败关闭策略执行，请先在 GeoIP 页面配置离线数据库。</div>
+{% endif %}
+
+<form id="main-settings-form" method="post" action="{{ admin_url('/settings') }}" class="settings-form">
+  <input type="hidden" name="csrf" value="{{ csrf_token }}">
+
+  <section class="panel">
+    <div class="panel-head"><h2>实验性功能</h2><span class="muted small">默认关闭，按需开启</span></div>
+    <label class="check"><input type="checkbox" name="experimental_features" value="1" {% if values.experimental_features == '1' %}checked{% endif %}> 启用 GeoIP 地区限制与“完全重置”等实验性功能</label>
+    <p class="muted small">关闭时 GeoIP 页面、国家/地区规则和完全重置入口都会隐藏，区域限制也不会执行。开启后才会显示相应设置入口。</p>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head"><h2>站点</h2><span class="muted small">基础信息与主题</span></div>
+    <div class="two-col">
+      <label>站点名称<input name="site_name" value="{{ values.site_name }}" maxlength="80"></label>
+      <label>副标题<input name="site_subtitle" value="{{ values.site_subtitle }}" maxlength="160"></label>
+    </div>
+    <label>SEO 描述<input name="site_description" value="{{ values.site_description }}" maxlength="500"></label>
+    <div class="two-col">
+      <label>对外地址（可选）<input name="public_base_url" value="{{ values.public_base_url }}" placeholder="https://bed.com"></label>
+      <label>主题强调色<input type="color" name="accent_color" value="{{ values.accent_color or '#d7a76c' }}"></label>
+    </div>
+    <label>站点图标 URL（留空使用默认 ◒；也可以在下方直接上传）<input name="site_icon_url" value="{{ values.site_icon_url }}" placeholder="/branding/icon-xxxx.png 或 https://..."></label>
+    <div class="three-col">
+      <label>每页数量<input type="number" name="per_page" value="{{ values.per_page }}" min="6" max="200"></label>
+      <label>单文件上限（MB）<input type="number" name="max_upload_mb" value="{{ values.max_upload_mb }}" min="1" max="2048"></label>
+      <label>允许扩展名<input name="allowed_extensions" value="{{ values.allowed_extensions }}"></label>
+    </div>
+    <div class="check-row">
+      <label class="check"><input type="checkbox" name="blur_nsfw" value="1" {% if values.blur_nsfw == '1' %}checked{% endif %}> 访客端默认模糊 NSFW 图片</label>
+      <label class="check"><input type="checkbox" name="client_download_enabled" value="1" {% if values.client_download_enabled == '1' %}checked{% endif %}> 允许客户端下载同步</label>
+      <label class="check"><input type="checkbox" name="external_image_enabled" value="1" {% if values.external_image_enabled == '1' %}checked{% endif %}> 开放图片外链地址</label>
+    </div>
+    <p class="muted small">开启后图片详情页和后台会显示 <code>/embed/图片ID</code> 外链，其他网站可以直接用 <code>&lt;img&gt;</code> 引用。关闭后外链地址返回 403，站内查看原图不受影响。它提供的是可控的外链入口，不等同于完整防盗链。</p>
+    {% if values.experimental_features == '1' %}
+    <div class="two-col">
+      <label>NSFW 默认屏蔽国家<input name="nsfw_blocked_countries" value="{{ values.nsfw_blocked_countries|country_list }}" placeholder="CN"></label>
+      <label>GeoIP 无数据时
+        <select name="geoip_fail_mode">
+          <option value="block" {% if values.geoip_fail_mode == 'block' %}selected{% endif %}>失败关闭（更安全）</option>
+          <option value="allow" {% if values.geoip_fail_mode == 'allow' %}selected{% endif %}>失败放行</option>
+        </select>
+      </label>
+    </div>
+    <p class="muted small">国家使用两位 ISO 代码（CN、US、JP…）。NSFW 默认规则只在图片/相册没有显式地区规则时生效。</p>
+    {% else %}
+    <input type="hidden" name="nsfw_blocked_countries" value="{{ values.nsfw_blocked_countries|country_list }}">
+    <input type="hidden" name="geoip_fail_mode" value="{{ values.geoip_fail_mode }}">
+    {% endif %}
+  </section>
+
+  <section class="panel">
+    <div class="panel-head"><h2>鼠标样式</h2><span class="muted small">前台整站生效</span></div>
+    <div class="two-col">
+      <label>预设样式
+        <select name="cursor_style" data-cursor-style>
+          <option value="default" {% if values.cursor_style == 'default' %}selected{% endif %}>系统默认（不改变）</option>
+          <option value="ink" {% if values.cursor_style == 'ink' %}selected{% endif %}>墨线箭头 · 细白描边</option>
+          <option value="ring" {% if values.cursor_style == 'ring' %}selected{% endif %}>圆环准点 · 安静</option>
+          <option value="cross" {% if values.cursor_style == 'cross' %}selected{% endif %}>轻量准星 · 精准</option>
+          <option value="diamond" {% if values.cursor_style == 'diamond' %}selected{% endif %}>菱形标记 · 克制</option>
+          <option value="custom" {% if values.cursor_style == 'custom' %}selected{% endif %}>自定义图片 URL</option>
+        </select>
+      </label>
+      <label>自定义光标 URL
+        <input name="cursor_custom_url" data-cursor-url value="{{ values.cursor_custom_url }}" placeholder="/static/cursors/ink.svg 或 https://...">
+      </label>
+    </div>
+    <div class="two-col">
+      <label>热点 X（像素）<input type="number" name="cursor_hotspot_x" value="{{ values.cursor_hotspot_x }}" min="0" max="64"></label>
+      <label>热点 Y（像素）<input type="number" name="cursor_hotspot_y" value="{{ values.cursor_hotspot_y }}" min="0" max="64"></label>
+    </div>
+    <p class="muted small">预设使用 32px 矢量光标，边缘清晰；自定义支持本站路径或 https 图片，热点是光标实际点击的位置。部分浏览器会限制超大光标文件。</p>
+    <div class="cursor-preview cursor-preview-{{ values.cursor_style }}" data-cursor-preview>
+      <span>把鼠标移到这里预览</span>
+      <button class="button ghost small-button" type="button">可点击元素</button>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head"><h2>首页与浏览</h2><span class="muted small">决定访客第一眼看到什么</span></div>
+    <div class="two-col">
+      <label>首页模式
+        <select name="home_mode">
+          <option value="waterfall" {% if values.home_mode == 'waterfall' %}selected{% endif %}>瀑布流（默认）</option>
+          <option value="carousel" {% if values.home_mode == 'carousel' %}selected{% endif %}>只显示轮播</option>
+          <option value="carousel_waterfall" {% if values.home_mode == 'carousel_waterfall' %}selected{% endif %}>轮播 + 瀑布流</option>
+        </select>
+      </label>
+      <label>轮播内容
+        <select name="home_carousel_kind">
+          <option value="assets" {% if values.home_carousel_kind == 'assets' %}selected{% endif %}>图片轮播</option>
+          <option value="albums" {% if values.home_carousel_kind == 'albums' %}selected{% endif %}>相册封面轮播</option>
+        </select>
+      </label>
+    </div>
+    <div class="two-col">
+      <label>轮播图片 / 相册 ID<input name="home_carousel_ids" value="{{ values.home_carousel_ids }}" placeholder="留空自动取最新，例如 12,18,36"></label>
+      <label>轮播间隔（秒）<input type="number" name="home_carousel_interval" value="{{ values.home_carousel_interval }}" min="2" max="30"></label>
+    </div>
+    <div class="two-col">
+      <label>首页瀑布流来源
+        <select name="home_waterfall_source">
+          <option value="latest" {% if values.home_waterfall_source == 'latest' %}selected{% endif %}>最新上传</option>
+          <option value="selected" {% if values.home_waterfall_source == 'selected' %}selected{% endif %}>精选图片</option>
+          <option value="all" {% if values.home_waterfall_source == 'all' %}selected{% endif %}>全部图片</option>
+        </select>
+      </label>
+      <label>精选图片 ID<input name="home_selected_ids" value="{{ values.home_selected_ids }}" placeholder="留空或填 12,18,36"></label>
+    </div>
+    <label>首页图片排列
+      <select name="home_layout">
+        <option value="masonry" {% if values.home_layout == 'masonry' %}selected{% endif %}>完整图片瀑布（默认，保留比例，不裁切）</option>
+        <option value="grid" {% if values.home_layout == 'grid' %}selected{% endif %}>整齐网格（裁切为正方形）</option>
+      </select>
+    </label>
+    <label>“全部图片”页面翻页方式
+      <select name="browse_mode">
+        <option value="pagination" {% if values.browse_mode == 'pagination' %}selected{% endif %}>传统翻页</option>
+        <option value="infinite" {% if values.browse_mode == 'infinite' %}selected{% endif %}>无限瀑布流（滚动加载）</option>
+      </select>
+    </label>
+    <label>“全部图片”页面卡片排列
+      <select name="browse_layout">
+        <option value="masonry" {% if values.browse_layout == 'masonry' %}selected{% endif %}>完整图片瀑布（保留比例，尽量不留空隙）</option>
+        <option value="grid" {% if values.browse_layout == 'grid' %}selected{% endif %}>整齐网格（裁切预览图，每张一样大）</option>
+      </select>
+    </label>
+    <label>相册列表样式
+      <select name="albums_layout">
+        <option value="rows" {% if values.albums_layout == 'rows' %}selected{% endif %}>横排作品辑（默认，左侧相册名 + 右侧预览）</option>
+        <option value="cards" {% if values.albums_layout == 'cards' %}selected{% endif %}>封面卡片网格</option>
+        <option value="compact" {% if values.albums_layout == 'compact' %}selected{% endif %}>极简单行列表</option>
+      </select>
+    </label>
+    <p class="muted small">图片 ID 在后台“图片”列表里可以看到；相册 ID 在“相册”编辑页地址栏里可以看到。留空表示自动使用最新内容。</p>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head"><h2>公开统计页</h2><span class="muted small">只展示聚合数据，不展示标题、提示词、IP 或账户信息</span></div>
+    <label class="check"><input type="checkbox" name="stats_enabled" value="1" {% if values.stats_enabled == '1' %}checked{% endif %}> 在导航栏最后显示“统计”页面</label>
+    <p class="muted small">关闭后前台访问 <code>/stats</code> 会返回 404；下面的勾选项决定页面公开哪些区块。</p>
+    <div class="two-col">
+      <label class="check"><input type="checkbox" name="stats_show_counts" value="1" {% if values.stats_show_counts == '1' %}checked{% endif %}> 图片、相册总数</label>
+      <label class="check"><input type="checkbox" name="stats_show_storage" value="1" {% if values.stats_show_storage == '1' %}checked{% endif %}> 媒体存储容量</label>
+      <label class="check"><input type="checkbox" name="stats_show_metadata" value="1" {% if values.stats_show_metadata == '1' %}checked{% endif %}> 元数据覆盖率与 LoRA 数量</label>
+      <label class="check"><input type="checkbox" name="stats_show_activity" value="1" {% if values.stats_show_activity == '1' %}checked{% endif %}> 近期新增与更新时间</label>
+      <label class="check"><input type="checkbox" name="stats_show_albums" value="1" {% if values.stats_show_albums == '1' %}checked{% endif %}> 相册公开排行</label>
+      <label class="check"><input type="checkbox" name="stats_show_guest" value="1" {% if values.stats_show_guest == '1' %}checked{% endif %}> 访客上传统计（默认不公开）</label>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head"><h2>访客上传</h2><span class="muted small">默认关闭；开启后导航出现“上传”</span></div>
+    <label class="check"><input type="checkbox" name="guest_upload_enabled" value="1" {% if values.guest_upload_enabled == '1' %}checked{% endif %}> 允许访客上传图片</label>
+    <label class="check"><input type="checkbox" name="guest_upload_log_ip" value="1" {% if values.guest_upload_log_ip == '1' %}checked{% endif %}> 记录访客上传 IP，供后台追溯</label>
+    <p class="muted small">默认关闭。IP 属于个人信息，是否能收集取决于你所在地区的法律、是否向访客明确告知用途与留存期限。启用后仅记录访客上传行为，并在图片详情中显示；请只用于安全审计和滥用追溯。关闭只停止新记录，已经保存的 IP 不会自动删除，需要时请删除对应图片或手动清理。</p>
+    <div class="two-col">
+      <label>上传密钥模式
+        <select name="guest_upload_key_mode">
+          <option value="off" {% if values.guest_upload_key_mode == 'off' %}selected{% endif %}>不需要密钥</option>
+          <option value="fixed" {% if values.guest_upload_key_mode == 'fixed' %}selected{% endif %}>固定密钥</option>
+          <option value="daily" {% if values.guest_upload_key_mode == 'daily' %}selected{% endif %}>每日自动轮换</option>
+          <option value="once" {% if values.guest_upload_key_mode == 'once' %}selected{% endif %}>一次性密钥</option>
+        </select>
+      </label>
+      <label>固定密钥（留空不修改）<input type="password" name="guest_upload_fixed_key" autocomplete="new-password" placeholder="{% if values.guest_upload_key_hash %}已设置，留空保持原密钥{% else %}建议至少 6 位{% endif %}"></label>
+    </div>
+    {% if values.guest_upload_key_mode == 'daily' %}
+    <div class="guest-key-current"><span>今日密钥</span><code>{{ guest_daily_key }}</code><small>按服务器本地日期自动变化，访客填写这个值。</small></div>
+    {% elif values.guest_upload_key_mode == 'once' %}
+    <div class="guest-key-current">
+      <span>一次性密钥</span>
+      <code>{{ guest_once_code or '尚未生成' }}</code>
+      <small>{% if guest_once_used %}已经使用，需要重新生成。{% else %}使用一次后立即失效。{% endif %}</small>
+    </div>
+    <div class="inline-actions">
+      <button class="button ghost small-button" type="submit" formaction="{{ admin_url('/settings/guest-key') }}" formnovalidate name="action" value="generate_once">生成一次性密钥</button>
+      {% if guest_once_used %}<button class="button ghost small-button" type="submit" formaction="{{ admin_url('/settings/guest-key') }}" formnovalidate name="action" value="reset_once">重新启用当前密钥</button>{% endif %}
+    </div>
+    {% endif %}
+    {% if not guest_key_configured %}<p class="guest-warning">当前密钥模式还没有可用密钥，访客无法上传。</p>{% endif %}
+    <label>允许访客上传的相册（按住 Ctrl / Command 多选；不选表示全部相册）
+      {% set selected_guest_albums = values.guest_upload_album_ids.split(',') %}
+      <select name="guest_upload_album_ids" multiple size="7">
+        {% for album in albums %}
+        <option value="{{ album.id }}" {% if album.id|string in selected_guest_albums %}selected{% endif %}>{{ '—' * album.depth }} {{ album.path }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <div class="three-col">
+      <label>单张上限（MB）<input type="number" name="guest_upload_max_mb" value="{{ values.guest_upload_max_mb }}" min="1" max="2048"></label>
+      <label>总容量池（MB）<input type="number" name="guest_upload_quota_mb" value="{{ values.guest_upload_quota_mb }}" min="0" max="1048576"><small class="muted">0 表示不限</small></label>
+      <label>上传间隔（秒）<input type="number" name="guest_upload_interval_seconds" value="{{ values.guest_upload_interval_seconds }}" min="0" max="86400"><small class="muted">0 表示不限</small></label>
+    </div>
+    <label>一次最多文件数<input type="number" name="guest_upload_max_files" value="{{ values.guest_upload_max_files }}" min="1" max="100"></label>
+    <p class="muted small">总容量池只统计通过访客页面上传的图片，后台和客户端上传不占用。每个相册还可以单独设置“相册容量”，请在相册编辑页填写；各相册容量之和可以超过总容量池，但实际保存的访客文件合计不能超过总容量池。删除访客图片会自动释放容量；密钥、容量和间隔限制都在服务端校验。</p>
+    <label class="check"><input type="checkbox" name="guest_upload_cycle_enabled" value="1" {% if values.guest_upload_cycle_enabled == '1' %}checked{% endif %}> 容量不足时循环销毁最旧的访客图片</label>
+    <div class="two-col">
+      <label>销毁范围
+        <select name="guest_upload_cycle_scope">
+          <option value="album" {% if values.guest_upload_cycle_scope == 'album' %}selected{% endif %}>只销毁同相册的访客图片</option>
+          <option value="all" {% if values.guest_upload_cycle_scope == 'all' %}selected{% endif %}>按全站最旧顺序销毁访客图片</option>
+        </select>
+      </label>
+    </div>
+    <p class="muted small">开启后，访客上传遇到容量不足时会永久删除最旧的访客图片，无法从回收站恢复；管理员上传的图片不会计入额度，也绝不会被删除。相册自身容量不足时，只能删除该相册里的访客图片，选择“全站”也不会改变这一点；总容量池不足时才会按这里的范围清理。</p>
+  </section>
+
+  {% if values.experimental_features == '1' %}
+  <section class="panel">
+    <div class="panel-head"><h2>GeoIP 数据库</h2><span class="muted small">可选：从公开合法来源拉取</span></div>
+    <label class="check"><input type="checkbox" name="geoip_public_update_enabled" value="1" {% if values.geoip_public_update_enabled == '1' %}checked{% endif %}> 允许从 DB-IP Lite 拉取公开国家数据库</label>
+    <p class="muted small">来源：DB-IP Lite（CC BY 4.0），公开可自部署。开启后仍需在 <a href="{{ admin_url('/geoip') }}">GeoIP 页面</a>手动点击更新；不会在后台静默下载。使用该数据库时需要保留来源署名。</p>
+  </section>
+  {% endif %}
+
+  <section class="panel">
+    <div class="panel-head"><h2>关于页面</h2><span class="muted small">独立 /about 页面</span></div>
+    <label class="check"><input type="checkbox" name="about_enabled" value="1" {% if values.about_enabled == '1' %}checked{% endif %}> 开启关于页面，并在导航显示“关于”</label>
+    <div class="two-col">
+      <label>显示名称<input name="about_name" value="{{ values.about_name }}" maxlength="120" placeholder="你的名字 / 站点名"></label>
+      <label>头像 URL<input name="about_avatar" value="{{ values.about_avatar }}" placeholder="/branding/avatar-xxxx.png 或 https://..."></label>
+    </div>
+    <label>简介<textarea name="about_bio" rows="3" maxlength="5000" placeholder="一两句话介绍自己或这个站点">{{ values.about_bio }}</textarea></label>
+    <label>自定义 HTML 内容（会原样插入页面，请只粘贴可信内容）
+      <textarea name="about_html" rows="9" class="code-input" placeholder="<h2>关于我</h2><p>...</p>">{{ values.about_html }}</textarea>
+    </label>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head"><h2>页脚与自定义样式</h2><span class="muted small">适合备案号、版权、统计代码等</span></div>
+    <div class="two-col">
+      <label>备案号 / 页脚文字<input name="footer_icp" value="{{ values.footer_icp }}" placeholder="例如 京ICP备xxxxxxx号"></label>
+      <label>备案链接<input name="footer_icp_url" value="{{ values.footer_icp_url }}" placeholder="https://beian.miit.gov.cn/"></label>
+    </div>
+    <label>页脚自定义 HTML（原样插入，请只粘贴可信内容）
+      <textarea name="footer_html" rows="6" class="code-input" placeholder="<p>联系邮箱：...</p>">{{ values.footer_html }}</textarea>
+    </label>
+    <label>自定义 CSS（会追加到全站样式后面）
+      <textarea name="custom_css" rows="8" class="code-input" placeholder=":root { --accent: #d7a76c; }">{{ values.custom_css }}</textarea>
+    </label>
+    <label>自定义 &lt;head&gt; HTML（原样插入，可用于 favicon、统计脚本或额外 meta）
+      <textarea name="custom_head_html" rows="6" class="code-input" placeholder="<meta name='...' content='...'>">{{ values.custom_head_html }}</textarea>
+    </label>
+    <p class="muted small">自定义 HTML 只允许管理员编辑。不要粘贴不可信的第三方代码，否则可能影响所有访客。</p>
+  </section>
+
+  <div class="settings-submit">
+    <button class="button" type="submit">保存全部设置</button>
+    <span class="muted small">保存后前台立即生效，无需重启。</span>
+  </div>
+</form>
+
+<div class="settings-save-dock" role="region" aria-label="保存设置">
+  <span class="muted small">改完随时保存，不用滑到底部</span>
+  <button class="button" type="submit" form="main-settings-form">保存全部设置</button>
+</div>
+
+<div class="admin-grid-2">
+  <section class="panel">
+    <div class="panel-head"><h2>上传站点图标</h2><span class="muted small">浏览器标签页 / 站点 logo</span></div>
+    {% if values.site_icon_url %}
+    <p class="muted small">当前：<code>{{ values.site_icon_url }}</code></p>
+    {% if values.site_icon_url.endswith('.svg') or values.site_icon_url.startswith('/branding/') or values.site_icon_url.startswith('http') %}
+    <p><img class="branding-preview" src="{{ values.site_icon_url }}" alt="站点图标"></p>
+    {% endif %}
+    {% else %}<p class="muted small">当前使用默认 ◒ 图标。</p>{% endif %}
+    <form method="post" action="{{ admin_url('/settings/branding') }}" enctype="multipart/form-data" class="stack-form">
+      <input type="hidden" name="csrf" value="{{ csrf_token }}">
+      <input type="hidden" name="kind" value="icon">
+      <label>图标文件<input type="file" name="file" accept=".png,.jpg,.jpeg,.webp,.gif,.ico,.svg,image/*" required></label>
+      <button class="button ghost" type="submit">上传并替换图标</button>
+    </form>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head"><h2>上传关于页头像</h2><span class="muted small">也可以在左侧填写头像 URL</span></div>
+    {% if values.about_avatar %}<p><img class="branding-preview" src="{{ values.about_avatar }}" alt="关于页头像"></p>{% endif %}
+    <form method="post" action="{{ admin_url('/settings/branding') }}" enctype="multipart/form-data" class="stack-form">
+      <input type="hidden" name="csrf" value="{{ csrf_token }}">
+      <input type="hidden" name="kind" value="avatar">
+      <label>头像文件<input type="file" name="file" accept=".png,.jpg,.jpeg,.webp,.gif,image/*" required></label>
+      <button class="button ghost" type="submit">上传并替换头像</button>
+    </form>
+  </section>
+</div>
+
+<section class="panel">
+  <div class="panel-head"><h2>后台路径</h2><span class="muted small">当前 /{{ admin_prefix }}</span></div>
+  <p class="muted">改成只有你知道的单段字符串。修改后旧路径立即 404；忘记时可在服务器运行 CLI 重置。</p>
+  <form method="post" action="{{ admin_url('/settings/admin-path') }}" class="inline-form" data-confirm="修改后台路径后当前地址会失效，确定继续？">
+    <input type="hidden" name="csrf" value="{{ csrf_token }}">
+    <label>新路径<input name="admin_path" value="{{ admin_prefix }}" maxlength="32" pattern="[A-Za-z0-9_-]{3,32}"></label>
+    <button class="button" type="submit">修改路径</button>
+  </form>
+  <p class="muted small">保留名称：api、media、static、images、albums、about、branding、download、unlock、search、browse、upload、stats、healthz。</p>
+</section>
+
+{% if values.experimental_features == '1' %}
+<section class="panel danger-panel">
+  <div class="panel-head"><h2>完全重置</h2><span class="muted small">仅实验性功能开启时可用</span></div>
+  <p class="muted">会删除所有图片、相册、缩略图、原图、设置、账户、会话、API Token、站点图标和密钥，恢复到刚安装、尚未创建管理员的纯净状态。此操作不可撤销，也不会自动备份。</p>
+  <button class="button danger" type="button" data-reset-open>完全重置应用…</button>
+</section>
+
+<div class="admin-modal" data-reset-modal hidden>
+  <div class="admin-modal-backdrop" data-reset-close></div>
+  <div class="admin-modal-card" role="dialog" aria-modal="true" aria-labelledby="reset-modal-title">
+    <button class="admin-modal-close" type="button" data-reset-close aria-label="关闭">×</button>
+    <p class="eyebrow">DANGER ZONE</p>
+    <h2 id="reset-modal-title">完全重置应用</h2>
+
+    <div data-reset-step="1">
+      <p class="muted">第一步：确认你知道这会删除全部图片和相册，而且无法从应用内恢复。</p>
+      <label class="check"><input type="checkbox" data-reset-check1> 我了解所有图片、相册和文件都会被删除</label>
+      <div class="inline-actions">
+        <button class="button danger" type="button" data-reset-next="2" disabled>继续</button>
+        <button class="button ghost" type="button" data-reset-close>取消</button>
+      </div>
+    </div>
+
+    <div data-reset-step="2" hidden>
+      <p class="muted">第二步：确认设置、管理员账户、会话、API Token 和加密密钥也会被清空。</p>
+      <label class="check"><input type="checkbox" data-reset-check2> 我了解需要重新完成初始化，旧密钥无法恢复</label>
+      <div class="inline-actions">
+        <button class="button danger" type="button" data-reset-next="3" disabled>继续</button>
+        <button class="button ghost" type="button" data-reset-close>取消</button>
+      </div>
+    </div>
+
+    <div data-reset-step="3" hidden>
+      <p class="muted">第三步：输入 <code>完全重置</code> 后才能执行。再次提醒：没有撤销，也没有自动备份。</p>
+      <form id="reset-form" method="post" action="{{ admin_url('/experimental/reset') }}" class="stack-form">
+        <input type="hidden" name="csrf" value="{{ csrf_token }}">
+        <input type="hidden" name="confirm_1" value="" data-reset-confirm1>
+        <input type="hidden" name="confirm_2" value="" data-reset-confirm2>
+        <label>确认文字<input name="confirm_phrase" data-reset-phrase autocomplete="off" spellcheck="false" placeholder="完全重置"></label>
+        <div class="inline-actions">
+          <button class="button danger" type="submit" data-reset-final disabled>确认删除全部数据</button>
+          <button class="button ghost" type="button" data-reset-close>取消</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+<section class="panel">
+  <div class="panel-head"><h2>安全提示</h2></div>
+  <ul class="plain-list">
+    <li>生产环境必须使用 HTTPS，避免 API Token 和后台密码在明文 HTTP 中泄露。</li>
+    <li>备份时同时备份 <code>data/ostensory.sqlite3</code>、<code>data/master.key</code>、<code>data/branding</code> 和上传目录。</li>
+    <li>反向代理需要传递 <code>X-Forwarded-For</code> 和 <code>X-Forwarded-Proto</code>，并只信任你自己的代理。</li>
+  </ul>
+</section>
+{% endblock %}

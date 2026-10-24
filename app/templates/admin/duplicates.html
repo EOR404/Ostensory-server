@@ -1,0 +1,147 @@
+{% extends "admin/base_admin.html" %}
+{% block title %}重复检查 · 管理后台{% endblock %}
+{% block content %}
+<div class="page-title">
+  <div>
+    <p class="eyebrow">DUPLICATE CHECK</p>
+    <h1>重复检查</h1>
+    <p class="muted">先按文件名找出疑似重复，再用 SHA-256 确认；确认前不会删除任何图片。</p>
+  </div>
+  <form method="post" action="{{ admin_url('/duplicates/check') }}">
+    <input type="hidden" name="csrf" value="{{ csrf_token }}">
+    <button class="button" type="submit">开始重复检查</button>
+  </form>
+</div>
+
+{% if flash %}<div class="admin-notice">{{ flash }}</div>{% endif %}
+{% if error %}<div class="admin-notice warn">{{ error }}</div>{% endif %}
+
+<section class="panel duplicate-status-panel">
+  <div class="panel-head">
+    <h2>检查状态</h2>
+    <span class="mini-tag {% if check_completed %}ok{% endif %}">{{ '已检查' if check_completed else '尚未检查' }}</span>
+  </div>
+  {% if check_completed %}
+  <p class="muted small">上次检查：{{ checked_at|datetime or '未知时间' }}；发现 <strong>{{ group_count }}</strong> 组同名图片，共 {{ duplicate_assets }} 张候选。</p>
+  {% else %}
+  <p class="muted small">点击右上角“开始重复检查”。检查只生成结果，不会自动删除；重复图片仍会正常显示。</p>
+  {% endif %}
+  <form method="post" action="{{ admin_url('/duplicates/display') }}" class="duplicate-display-form">
+    <input type="hidden" name="csrf" value="{{ csrf_token }}">
+    <label class="check">
+      <input type="checkbox" name="show" value="1" {% if display_duplicates %}checked{% endif %} {% if not check_completed %}disabled{% endif %}>
+      展示重复图片
+    </label>
+    <span class="muted small">默认勾选：主页和“全部图片”显示全部内容。取消勾选后，同名且 SHA-256 相同的旧副本会从主页、“全部图片”和无限流中隐藏。</span>
+    <button class="button ghost small-button" type="submit" {% if not check_completed %}disabled{% endif %}>保存显示设置</button>
+  </form>
+</section>
+
+{% if check_completed %}
+<section class="panel">
+  <div class="panel-head">
+    <h2>检查结果</h2>
+    {% if groups %}
+    <button class="button" type="button" data-open-dedup>一键去重</button>
+    {% endif %}
+  </div>
+  {% if groups %}
+  <div class="duplicate-group-list">
+    {% for group in groups %}
+    <article class="duplicate-group">
+      <div class="duplicate-group-head">
+        <div>
+          <strong>{{ group.name }}</strong>
+          <span class="mini-tag">{{ group.count }} 张</span>
+          {% if group.verified and group.hash_summary %}
+            {% if group.hash_summary.confirmed %}<span class="mini-tag ok">Hash 一致</span>{% else %}<span class="mini-tag warn">Hash 不一致</span>{% endif %}
+          {% endif %}
+        </div>
+        <a class="button ghost small-button" href="{{ admin_url('/duplicates') }}?verify={{ group.key|urlencode }}">检验 Hash 值</a>
+      </div>
+      {% if group.verified and group.hash_summary %}
+      <div class="hash-summary {% if group.hash_summary.confirmed %}ok{% else %}warn{% endif %}">
+        {% if group.hash_summary.confirmed %}
+        这 {{ group.count }} 张的 SHA-256 相同，确认是同一张图片。
+        {% else %}
+        文件名相同，但包含 {{ group.hash_summary.unique }} 种不同 SHA-256；只有 Hash 相同的旧副本会被一键去重，其他内容会保留。
+        {% endif %}
+      </div>
+      {% endif %}
+      <div class="duplicate-items">
+        {% for asset in group.assets %}
+        <a class="duplicate-item" href="{{ admin_url('/assets/' ~ asset.id) }}">
+          <img src="{{ media_url(asset.id, 'thumb', asset.sha256) }}" alt="" loading="lazy">
+          <span class="duplicate-item-main">
+            <strong>#{{ asset.id }} {{ asset.title or asset.original_name }}</strong>
+            <span>{{ asset_location(asset) }}</span>
+            <span class="muted">{{ asset.created_at|datetime }} · {{ asset.size|filesize }}</span>
+            <code title="{{ asset.sha256 }}">{{ asset.sha256[:12] }}…</code>
+          </span>
+        </a>
+        {% endfor %}
+      </div>
+    </article>
+    {% endfor %}
+  </div>
+  {% else %}
+  <p class="muted">没有发现同名图片。可以继续添加图片后再检查。</p>
+  {% endif %}
+</section>
+{% endif %}
+
+{% if groups %}
+<dialog class="dedup-dialog" data-dedup-dialog {% if review_open %}data-open="1"{% endif %}>
+  <div class="dedup-shell">
+    <div class="dedup-head">
+      <div>
+        <p class="eyebrow">DEDUPE REVIEW</p>
+        <h2>去重界面</h2>
+        <p class="muted small">每一行是一组同名图片。先“检验 Hash 值”，再决定是否删除。删除只会移入回收站，不会立刻销毁文件。</p>
+      </div>
+      <button class="icon-button" type="button" data-dedup-close aria-label="关闭">×</button>
+    </div>
+    <form method="post" action="{{ admin_url('/duplicates/delete') }}" data-dedup-form>
+      <input type="hidden" name="csrf" value="{{ csrf_token }}">
+      <div class="dedup-rows">
+        {% for group in groups %}
+        <section class="dedup-row">
+          <div class="dedup-row-head">
+            <div><strong>{{ group.name }}</strong> <span class="mini-tag">{{ group.count }} 张</span></div>
+            <a class="button ghost small-button" href="{{ admin_url('/duplicates') }}?review=1&amp;verify={{ group.key|urlencode }}">检验 Hash 值</a>
+          </div>
+          {% if group.verified and group.hash_summary %}
+          <div class="hash-summary {% if group.hash_summary.confirmed %}ok{% else %}warn{% endif %}">
+            {% if group.hash_summary.confirmed %}Hash 一致，确认重复。{% else %}Hash 不一致：有 {{ group.hash_summary.unique }} 种不同内容；一键去重只处理 Hash 相同的旧副本。{% endif %}
+          </div>
+          {% endif %}
+          <div class="dedup-assets">
+            {% for asset in group.assets %}
+            <label class="dedup-asset">
+              <input type="checkbox" name="asset_ids" value="{{ asset.id }}">
+              <img src="{{ media_url(asset.id, 'thumb', asset.sha256) }}" alt="" loading="lazy">
+              <span class="dedup-asset-text">
+                <strong>#{{ asset.id }}</strong>
+                <span>{{ asset_location(asset) }}</span>
+                <span class="muted">{{ asset.created_at|datetime }}</span>
+                <code title="{{ asset.sha256 }}">{{ asset.sha256[:12] }}…</code>
+              </span>
+            </label>
+            {% endfor %}
+          </div>
+        </section>
+        {% endfor %}
+      </div>
+      <div class="dedup-foot">
+        <span class="muted small">勾选要移入回收站的图片；一键去重只处理同名且 Hash 相同的旧副本。</span>
+        <div class="inline-actions">
+          <button class="button ghost" type="button" data-dedup-close>取消</button>
+          <button class="button danger" type="submit" formaction="{{ admin_url('/duplicates/delete') }}" data-confirm="把勾选的图片移入回收站？">删除选中</button>
+          <button class="button" type="submit" formaction="{{ admin_url('/duplicates/auto') }}" data-confirm="一键去重只处理同名且 Hash 相同的旧副本，每组保留创建日期最新的一张，其余移入回收站。继续？">一键去重（保留最新）</button>
+        </div>
+      </div>
+    </form>
+  </div>
+</dialog>
+{% endif %}
+{% endblock %}

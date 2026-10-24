@@ -1,0 +1,17 @@
+{% extends "admin/base_admin.html" %}
+{% block title %}账户 · 管理后台{% endblock %}
+{% block content %}
+<div class="page-title"><div><p class="eyebrow">ACCOUNT</p><h1>账户</h1></div></div>
+<section class="panel narrow-panel">
+  <form method="post" action="{{ admin_url('/account') }}" class="stack-form">
+    <input type="hidden" name="csrf" value="{{ csrf_token }}">
+    <label>用户名<input name="username" value="{{ admin.username }}" required maxlength="64"></label>
+    <label>当前密码<input type="password" name="current_password" required autocomplete="current-password"></label>
+    <hr>
+    <label>新密码<input type="password" name="new_password" autocomplete="new-password" placeholder="留空则不修改"></label>
+    <label>确认新密码<input type="password" name="new_password2" autocomplete="new-password"></label>
+    <p class="muted small">密码不强制长度；少于 10 位只会在保存后提醒。修改密码后，其他浏览器会话会被注销；已创建的 API Token 不会被自动撤销。</p>
+    <button class="button" type="submit">保存账户</button>
+  </form>
+</section>
+{% endblock %}

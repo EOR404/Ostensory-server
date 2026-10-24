@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}{{ settings.about_name or settings.site_name }} · {{ t('nav.about') }}{% endblock %}
+{% block content %}
+<section class="about-hero">
+  <div class="about-avatar">
+    {% if settings.about_avatar %}
+      <img src="{{ settings.about_avatar }}" alt="{{ settings.about_name or settings.site_name }}">
+    {% else %}
+      <span>{{ (settings.about_name or settings.site_name)[:1] }}</span>
+    {% endif %}
+  </div>
+  <div class="about-intro">
+    <p class="eyebrow">{{ t('about.eyebrow') }}</p>
+    <h1>{{ settings.about_name or settings.site_name }}</h1>
+    {% if settings.about_bio %}<p class="about-bio">{{ settings.about_bio }}</p>{% endif %}
+    {% if not settings.about_bio and settings.site_description %}<p class="about-bio">{{ settings.site_description }}</p>{% endif %}
+    <div class="about-links">
+      <a class="button ghost" href="/">{{ t('about.back_home') }}</a>
+      <a class="button ghost" href="/albums">{{ t('about.browse_albums') }}</a>
+    </div>
+  </div>
+</section>
+
+{% if settings.about_html %}
+<section class="about-content">
+  {{ settings.about_html|safe }}
+</section>
+{% endif %}
+{% endblock %}

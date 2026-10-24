@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="{{ language_code }}" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% if lang == 'en' %}Sign in · Ostensory{% else %}登录 · Ostensory{% endif %}</title>
+  <meta name="robots" content="noindex,nofollow">
+  <link rel="icon" href="/static/favicon.svg?v=1">
+  <link rel="stylesheet" href="/static/admin.css?v=19">
+  <script>
+    (function () {
+      try {
+        if (window.localStorage.getItem("ostensory.theme") === "light") {
+          document.documentElement.setAttribute("data-theme", "light");
+        }
+      } catch (error) { /* ignore */ }
+    })();
+  </script>
+</head>
+<body class="auth-body">
+  <div class="auth-tools">
+    {% set other_lang = 'en' if lang == 'zh' else 'zh' %}
+    <a class="topbar-tool" href="/language/{{ other_lang }}?next={{ request.url.path|urlencode }}" title="{{ 'English' if lang == 'zh' else '中文' }}">{{ 'EN' if lang == 'zh' else '中' }}</a>
+    <button class="topbar-tool" type="button" data-admin-theme aria-label="{{ '切换主题' if lang == 'zh' else 'Toggle theme' }}">
+      <svg class="theme-icon theme-icon-sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"></circle><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"></path></svg>
+      <svg class="theme-icon theme-icon-moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 15.2A8.5 8.5 0 0 1 8.8 4a8.5 8.5 0 1 0 11.2 11.2Z"></path></svg>
+    </button>
+  </div>
+  <main class="auth-card">
+    <p class="eyebrow">PRIVATE ACCESS</p>
+    <h1>管理后台</h1>
+    <p class="muted">请输入管理员用户名和密码。</p>
+    {% if login_error %}<div class="admin-notice error">{{ login_error }}</div>{% endif %}
+    <form method="post" action="{{ admin_url('/login') }}" class="stack-form">
+      <input type="hidden" name="csrf" value="{{ csrf_token }}">
+      <input type="hidden" name="next" value="{{ next }}">
+      <label>用户名<input name="username" value="{{ username|default('') }}" required autocomplete="username"></label>
+      <label>密码<input type="password" name="password" required autocomplete="current-password"></label>
+      <button class="button" type="submit">登录</button>
+    </form>
+    <p class="muted small">后台路径：<code>/{{ admin_prefix }}</code></p>
+  </main>
+  <script src="/static/admin-i18n.js?v=7" defer></script>
+  <script src="/static/admin.js?v=20" defer></script>
+</body>
+</html>

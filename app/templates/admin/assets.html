@@ -1,0 +1,185 @@
+{% extends "admin/base_admin.html" %}
+{% block title %}图片 · 管理后台{% endblock %}
+{% block content %}
+<div class="page-title">
+  <div><p class="eyebrow">LIBRARY</p><h1>图片</h1><p class="muted">共 {{ total }} 张{% if deleted_filter == '1' %}（回收站）{% endif %}</p></div>
+</div>
+
+<section class="panel">
+  <div class="panel-head"><h2>上传</h2><span class="muted small">支持 PNG / JPEG / WEBP / GIF，可多选</span></div>
+  <form method="post" action="{{ admin_url('/upload') }}" enctype="multipart/form-data" class="upload-form" data-upload-form data-name-check-url="{{ admin_url('/duplicates/album-names') }}">
+    <input type="hidden" name="csrf" value="{{ csrf_token }}">
+    <div class="candidate-panel" data-candidate-panel aria-live="polite">
+      <div class="candidate-head">
+        <div>
+          <span class="candidate-kicker">候选队列</span>
+          <h3>待上传文件</h3>
+          <p class="muted small" data-candidate-summary>还没有选择文件。可以分多次选择，候选会一直保留。</p>
+        </div>
+        <div class="candidate-tools">
+          <button class="button ghost small-button" type="button" data-select-all>全选</button>
+          <button class="button ghost small-button" type="button" data-select-none>全不选</button>
+          <button class="button ghost small-button" type="button" data-candidate-clear>清空</button>
+        </div>
+      </div>
+      <div class="candidate-grid" data-candidate-grid>
+        <p class="candidate-empty">还没有选择文件。拖入图片或点击下方选择，可以连续添加多批。</p>
+      </div>
+      <div class="candidate-foot">
+        <span class="muted small" data-candidate-total>已选 0 / 0</span>
+        <span class="muted small">确认上传在下方“选择图片”区域底部</span>
+      </div>
+    </div>
+    <div class="upload-source-head">
+      <div><h3>选择图片</h3><span class="muted small">选择后会加入上面的候选队列，不会立即上传。</span></div>
+      <span class="muted small" data-file-count>尚未选择文件</span>
+    </div>
+    <label class="dropzone" data-dropzone>
+      <input type="file" name="files" data-file-input multiple accept=".png,.jpg,.jpeg,.webp,.gif,image/png,image/jpeg,image/webp,image/gif">
+      <span class="dropzone-title">拖入图片，或点击这里选择</span>
+      <span class="muted small">支持一次多选；重复选择会继续追加到候选队列</span>
+    </label>
+    <div class="upload-options">
+      <label>相册
+        <select name="album_id" data-album-select>
+          <option value="">使用默认相册</option>
+          {% for choice in albums %}
+          <option value="{{ choice.id }}" {% if album_filter == choice.id|string %}selected{% endif %}>{{ '—' * choice.depth }} {{ choice.name }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>匣子
+        <select name="box_id">
+          <option value="">不放入匣子</option>
+          {% for box in boxes %}<option value="{{ box.id }}" {% if box_filter == box.id|string %}selected{% endif %}>{{ box.name }}</option>{% endfor %}
+        </select>
+      </label>
+      {% if settings.experimental_features == '1' %}
+      <label>地区规则
+        <select name="region_mode">
+          <option value="inherit">继承相册</option>
+          <option value="block">屏蔽下列国家</option>
+          <option value="allow">仅允许下列国家</option>
+        </select>
+      </label>
+      <label>国家代码<input name="region_countries" placeholder="CN, US（逗号分隔）"></label>
+      {% endif %}
+    </div>
+    <div class="upload-flags">
+      <label class="check"><input type="checkbox" name="nsfw" value="1"> 标记 NSFW</label>
+      <label class="check"><input type="checkbox" name="encrypt" value="1"> 落盘加密</label>
+      <span class="muted small">候选区一直显示在最上方；可以多次选文件、取消勾选或移除，最后再确认上传。</span>
+    </div>
+    <div class="upload-submit-row">
+      <span class="muted small" data-upload-selected>已选 0 张</span>
+      <button class="button" type="button" data-candidate-confirm disabled>上传选中图片</button>
+    </div>
+    <noscript><p class="muted small">需要启用 JavaScript 才能使用候选队列；也可以直接用下面的按钮上传当前文件选择。</p><button class="button" type="submit">上传选中图片</button></noscript>
+  </form>
+  <dialog class="dedup-dialog upload-conflict-dialog" data-upload-conflict-dialog>
+    <div class="dedup-shell">
+      <div class="dedup-head">
+        <div>
+          <p class="eyebrow">NAME CONFLICT</p>
+          <h2>相册内有同名图片</h2>
+          <p class="muted small">上传目标相册中已经存在下面这些文件名。你可以仍然上传，也可以只上传没有重名的图片。</p>
+        </div>
+        <button class="icon-button" type="button" data-upload-conflict-cancel aria-label="关闭">×</button>
+      </div>
+      <div style="padding:16px 22px">
+        <p class="muted small" data-upload-conflict-summary></p>
+        <ul class="upload-conflict-list" data-upload-conflict-list></ul>
+      </div>
+      <div class="dedup-foot">
+        <span class="muted small">重名不一定是重复内容，最终以文件本身为准；这里只做提醒。</span>
+        <div class="inline-actions">
+          <button class="button ghost" type="button" data-upload-conflict-cancel>取消</button>
+          <button class="button ghost" type="button" data-upload-conflict-others>只上传其他图片</button>
+          <button class="button" type="button" data-upload-conflict-all>仍然上传</button>
+        </div>
+      </div>
+    </div>
+  </dialog>
+  <div class="inline-actions" style="margin-top:12px">
+    <form method="post" action="{{ admin_url('/reparse-all') }}" data-confirm="重新解析全部正常图片的元数据？不会改动图片文件。">
+      <input type="hidden" name="csrf" value="{{ csrf_token }}">
+      <button class="button ghost" type="submit">重新解析全部元数据</button>
+    </form>
+    <span class="muted small">图片已存在但提示词或底模为空时，用这个按钮重跑解析。</span>
+  </div>
+</section>
+
+<section class="panel">
+  <form method="get" action="{{ admin_url('/assets') }}" class="filter-bar">
+    <input type="search" name="q" value="{{ q }}" placeholder="搜索标题、文件名、提示词、LoRA">
+    <input type="search" name="ip" value="{{ ip_filter }}" placeholder="上传 IP" aria-label="按上传 IP 筛选">
+    <select name="album_id">
+      <option value="">全部相册</option>
+      {% for choice in albums %}<option value="{{ choice.id }}" {% if album_filter == choice.id|string %}selected{% endif %}>{{ '—' * choice.depth }} {{ choice.name }}</option>{% endfor %}
+    </select>
+    <select name="box_id">
+      <option value="">全部匣子</option>
+      {% for box in boxes %}<option value="{{ box.id }}" {% if box_filter == box.id|string %}selected{% endif %}>{{ box.name }}</option>{% endfor %}
+    </select>
+    <select name="nsfw">
+      <option value="">全部内容</option>
+      <option value="1" {% if nsfw_filter == '1' %}selected{% endif %}>仅 NSFW</option>
+      <option value="0" {% if nsfw_filter == '0' %}selected{% endif %}>非 NSFW</option>
+    </select>
+    <select name="deleted">
+      <option value="">正常图片</option>
+      <option value="1" {% if deleted_filter == '1' %}selected{% endif %}>回收站</option>
+    </select>
+    <button class="button ghost" type="submit">筛选</button>
+  </form>
+
+  {% if assets %}
+  <form id="asset-bulk-form" method="post" action="{{ admin_url('/assets/bulk-delete') }}" data-bulk-form data-bulk-group="assets" data-confirm="确定处理选中的图片？彻底删除不可恢复。">
+    <input type="hidden" name="csrf" value="{{ csrf_token }}">
+    <input type="hidden" name="next" value="{{ request.url.path }}{% if request.url.query %}?{{ request.url.query }}{% endif %}">
+    <div class="bulk-bar">
+      <label class="check"><input type="checkbox" data-bulk-all data-bulk-group="assets"> 全选本页</label>
+      <span data-bulk-count data-bulk-group="assets">已选 0 项</span>
+      {% if deleted_filter == '1' %}
+      <button class="button danger" type="submit" name="purge" value="1" data-bulk-submit data-bulk-group="assets" disabled>彻底删除选中</button>
+      {% else %}
+      <button class="button danger" type="submit" name="purge" value="" data-bulk-submit data-bulk-group="assets" disabled>删除选中</button>
+      {% endif %}
+    </div>
+  </form>
+  <div class="table-wrap">
+    <table class="table asset-table">
+      <thead><tr><th class="select-col"><input type="checkbox" data-bulk-all data-bulk-group="assets" aria-label="全选本页图片"></th><th>图片</th><th>名称</th><th>相册</th><th>匣子</th><th>元数据</th><th>状态</th><th>大小</th><th></th></tr></thead>
+      <tbody>
+        {% for asset in assets %}
+        {% set meta = metadata_map.get(asset.id, {}) %}
+        <tr>
+          <td class="select-col"><input type="checkbox" name="asset_ids" value="{{ asset.id }}" form="asset-bulk-form" data-bulk-item data-bulk-group="assets" aria-label="选择图片 #{{ asset.id }}"></td>
+          <td><a class="thumb-link" href="{{ admin_url('/assets/' ~ asset.id) }}"><img src="{{ media_url(asset.id, 'thumb', asset.sha256) }}" alt="" loading="lazy"></a></td>
+          <td><a href="{{ admin_url('/assets/' ~ asset.id) }}">{{ asset.title or asset.original_name }}</a><div class="muted small">#{{ asset.id }} · {{ asset.original_name }}</div>{% if asset.upload_ip %}<div class="muted small">访客 IP {{ asset.upload_ip }}</div>{% endif %}</td>
+          <td>{{ asset.album_name or '未分类' }}</td>
+          <td>{% if asset.box_name %}<a href="{{ admin_url('/boxes/' ~ asset.box_id) }}">{{ asset.box_name }}</a>{% else %}<span class="muted">—</span>{% endif %}</td>
+          <td><span class="mini-tag">{{ meta.kind or 'unknown' }}</span>{% if meta.loras %}<span class="muted small">{{ meta.loras|length }} LoRA</span>{% endif %}{% if meta.base_model %}<div class="muted small">{{ meta.base_model }}</div>{% endif %}</td>
+          <td><span class="mini-tag {% if asset.nsfw %}danger{% endif %}">{{ 'NSFW' if asset.nsfw else '公开' }}</span>{% if asset.encrypted %}<span class="mini-tag">加密</span>{% endif %}{% if asset.deleted_at %}<span class="mini-tag danger">已删除</span>{% endif %}</td>
+          <td class="nowrap">{{ asset.size|filesize }}</td>
+          <td class="nowrap actions">
+            <a href="/images/{{ asset.id }}" target="_blank" rel="noopener">查看</a>
+            <a href="{{ admin_url('/assets/' ~ asset.id) }}">编辑</a>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% if pages > 1 %}
+  <nav class="pagination">
+    {% if page > 1 %}<a class="button ghost" href="{{ request.url.include_query_params(page=page-1) }}">上一页</a>{% endif %}
+    <span>第 {{ page }} / {{ pages }} 页</span>
+    {% if page < pages %}<a class="button ghost" href="{{ request.url.include_query_params(page=page+1) }}">下一页</a>{% endif %}
+  </nav>
+  {% endif %}
+  {% else %}
+  <p class="muted">没有符合条件的图片。</p>
+  {% endif %}
+</section>
+{% endblock %}

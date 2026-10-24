@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block title %}{{ title or t('error.request_failed') }} · {{ settings.site_name }}{% endblock %}
+{% block content %}
+<section class="error-page">
+  <p class="eyebrow">HTTP {{ status_code }}</p>
+  <h1>{{ title or t('error.request_failed') }}</h1>
+  <p>{{ message or t('error.request_failed') }}</p>
+  <a class="button" href="/">{{ t('error.back_home') }}</a>
+</section>
+{% endblock %}

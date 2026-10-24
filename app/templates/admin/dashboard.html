@@ -1,0 +1,70 @@
+{% extends "admin/base_admin.html" %}
+{% block title %}概览 · 管理后台{% endblock %}
+{% block content %}
+<div class="page-title">
+  <div>
+    <p class="eyebrow">OVERVIEW</p>
+    <h1>概览</h1>
+  </div>
+  <a class="button" href="{{ admin_url('/assets') }}">上传图片</a>
+</div>
+
+{% for warning in warnings %}
+<div class="admin-notice warn">{{ warning }}</div>
+{% endfor %}
+
+<div class="stat-grid">
+  <div class="stat-card"><span>图片</span><strong>{{ stats.assets }}</strong></div>
+  <div class="stat-card"><span>相册</span><strong>{{ stats.albums }}</strong></div>
+  <div class="stat-card"><span>NSFW</span><strong>{{ stats.nsfw }}</strong></div>
+  <div class="stat-card"><span>落盘加密</span><strong>{{ stats.encrypted }}</strong></div>
+  <div class="stat-card"><span>API Token</span><strong>{{ stats.tokens }}</strong></div>
+  <div class="stat-card"><span>原图总量</span><strong>{{ stats.bytes|filesize }}</strong></div>
+</div>
+
+<div class="admin-grid-2">
+  <section class="panel">
+    <div class="panel-head"><h2>最近上传</h2><a href="{{ admin_url('/assets') }}">全部 →</a></div>
+    {% if recent %}
+    <div class="recent-strip">
+      {% for asset in recent %}
+      <a href="{{ admin_url('/assets/' ~ asset.id) }}" title="{{ asset.title or asset.original_name }}">
+        <img src="{{ media_url(asset.id, 'thumb', asset.sha256) }}" alt="" loading="lazy">
+        {% if asset.nsfw %}<span class="mini-badge">NSFW</span>{% endif %}
+      </a>
+      {% endfor %}
+    </div>
+    {% else %}
+    <p class="muted">还没有图片。</p>
+    {% endif %}
+  </section>
+
+  {% if settings.experimental_features == '1' %}
+  <section class="panel">
+    <div class="panel-head"><h2>GeoIP 状态</h2><a href="{{ admin_url('/geoip') }}">详情 →</a></div>
+    {% if geo_status.available %}
+      <p class="status-line ok">可用 · 覆盖规则 {{ geo_status.overrides }} 条</p>
+    {% else %}
+      <p class="status-line danger">不可用</p>
+    {% endif %}
+    <p class="muted small">{{ geo_status.database }}</p>
+    {% if geo_status.error %}<p class="muted small">{{ geo_status.error }}</p>{% endif %}
+    <p class="muted small">需要按国家/地区限制时，请配置合法的离线 MMDB；没有数据时会按失败关闭策略处理受限内容。</p>
+  </section>
+  {% endif %}
+</div>
+
+<section class="panel">
+  <div class="panel-head"><h2>最近操作</h2></div>
+  {% if recent_logs %}
+  <table class="table">
+    <thead><tr><th>时间</th><th>操作者</th><th>动作</th><th>目标</th><th>IP</th></tr></thead>
+    <tbody>
+      {% for log in recent_logs %}
+      <tr><td class="nowrap">{{ log.created_at|datetime }}</td><td>{{ log.actor }}</td><td><code>{{ log.action }}</code></td><td>{{ log.target }}</td><td>{{ log.ip }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}<p class="muted">暂无操作记录。</p>{% endif %}
+</section>
+{% endblock %}

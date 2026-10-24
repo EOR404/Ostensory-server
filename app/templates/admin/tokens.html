@@ -1,0 +1,51 @@
+{% extends "admin/base_admin.html" %}
+{% block title %}API Token · 管理后台{% endblock %}
+{% block content %}
+<div class="page-title"><div><p class="eyebrow">CLIENT ACCESS</p><h1>API Token</h1><p class="muted">客户端使用 Token 上传/下载，不需要保存管理员网页会话。</p></div></div>
+
+{% if new_token %}
+<section class="panel token-reveal">
+  <div class="panel-head"><h2>新 Token（只显示一次）</h2></div>
+  <p>复制并保存到客户端。关闭页面后无法再次查看。</p>
+  <div class="token-box"><code id="new-token">{{ new_token }}</code><button class="copy-btn" type="button" data-copy-target="#new-token">复制</button></div>
+</section>
+{% endif %}
+
+<section class="panel">
+  <div class="panel-head"><h2>创建 Token</h2></div>
+  <form method="post" action="{{ admin_url('/tokens') }}" class="inline-form">
+    <input type="hidden" name="csrf" value="{{ csrf_token }}">
+    <label>名称<input name="name" maxlength="80" value="我的客户端"></label>
+    <button class="button" type="submit">创建</button>
+  </form>
+</section>
+
+<section class="panel">
+  <div class="panel-head"><h2>已有 Token</h2></div>
+  {% if tokens %}
+  <div class="table-wrap">
+    <table class="table">
+      <thead><tr><th>名称</th><th>创建</th><th>最后使用</th><th>状态</th><th></th></tr></thead>
+      <tbody>
+        {% for token in tokens %}
+        <tr>
+          <td>{{ token.name }}</td>
+          <td class="nowrap">{{ token.created_at|datetime }}</td>
+          <td class="nowrap">{{ token.last_used_at|datetime or '从未' }}</td>
+          <td>{% if token.revoked_at %}<span class="mini-tag danger">已撤销</span>{% else %}<span class="mini-tag">有效</span>{% endif %}</td>
+          <td>
+            {% if not token.revoked_at %}
+            <form method="post" action="{{ admin_url('/tokens/' ~ token.id ~ '/revoke') }}" data-confirm="撤销后使用该 Token 的客户端会立即失效，继续？">
+              <input type="hidden" name="csrf" value="{{ csrf_token }}">
+              <button class="link-button danger-text" type="submit">撤销</button>
+            </form>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}<p class="muted">还没有 Token。客户端第一次登录时也可以自动创建。</p>{% endif %}
+</section>
+{% endblock %}

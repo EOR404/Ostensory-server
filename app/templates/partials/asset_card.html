@@ -1,0 +1,32 @@
+{% set asset = asset %}
+{% set gallery_source = gallery_source|default('all') %}
+<article class="asset-card{% if asset.nsfw_effective and settings.blur_nsfw %} is-nsfw{% endif %}" data-asset-id="{{ asset.id }}">
+  <a class="asset-thumb{% if asset.locked %} locked{% endif %}" href="{{ asset_url(asset.id, gallery_source) }}">
+    {% if asset.locked %}
+      <span class="lock-glyph">🔒</span>
+      <span class="lock-label">{{ t('common.requires_password') }}</span>
+    {% else %}
+      <img src="{{ media_url(asset.id, 'thumb', asset.sha256) }}" alt="{{ asset.title or asset.original_name }}" loading="lazy" width="{{ asset.width }}" height="{{ asset.height }}">
+    {% endif %}
+    {% if asset.nsfw_effective %}<span class="badge badge-nsfw">{{ t('common.nsfw') }}</span>{% endif %}
+    {% if asset.encrypted %}<span class="badge badge-lock">{{ t('common.encrypted') }}</span>{% endif %}
+  </a>
+  {% if asset.nsfw_effective and not asset.locked and settings.blur_nsfw %}
+  <button class="nsfw-cover" type="button" data-reveal-nsfw>
+    <span>{{ t('common.sensitive') }}</span>
+    <strong>{{ t('common.click_to_show') }}</strong>
+  </button>
+  {% endif %}
+  <div class="asset-info">
+    <a class="asset-title" href="{{ asset_url(asset.id, gallery_source) }}">{{ asset.title or asset.original_name }}</a>
+    <div class="asset-meta">
+      <span>{{ asset.width }}×{{ asset.height }}</span>
+      {% if asset.lora_count %}<span class="meta-lora">{{ asset.lora_count }} LoRA</span>{% endif %}
+      {% if asset.metadata.kind == 'comfyui' %}<span class="dot-comfy">ComfyUI</span>{% endif %}
+    </div>
+    <div class="asset-actions">
+      {% if not asset.locked %}<a href="{{ download_url(asset.id) }}" title="{{ t('common.download_original') }}">{{ t('common.download') }}</a>{% endif %}
+      <a href="{{ asset_url(asset.id, gallery_source) }}">{{ t('common.details') }}</a>
+    </div>
+  </div>
+</article>

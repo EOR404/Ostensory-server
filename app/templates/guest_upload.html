@@ -1,0 +1,126 @@
+{% extends "base.html" %}
+{% block body_class %} page-upload{% endblock %}
+{% block title %}{{ t('guest.title') }} · {{ settings.site_name }}{% endblock %}
+{% block head %}<meta name="robots" content="noindex,nofollow">{% endblock %}
+{% block content %}
+<section class="page-heading guest-heading">
+  <p class="eyebrow">{{ t('guest.eyebrow') }}</p>
+  <h1>{{ t('guest.heading') }}</h1>
+  <p class="muted">{{ t('guest.subtitle') }}</p>
+  {% if settings.guest_upload_log_ip == '1' %}
+  <p class="notice notice-ok">{{ t('guest.ip_notice') }}</p>
+  {% endif %}
+</section>
+
+{% if not guest_albums %}
+<div class="empty-state">
+  <p class="empty-title">{{ t('guest.no_albums_title') }}</p>
+  <p>{{ t('guest.no_albums_hint') }}</p>
+</div>
+{% else %}
+<form method="post" action="/upload" enctype="multipart/form-data" class="guest-upload-form" data-guest-upload-form data-guest-max-bytes="{{ guest_max_file_mb * 1024 * 1024 }}" data-guest-max-files="{{ guest_max_files }}">
+  <input type="hidden" name="csrf" value="{{ csrf_token }}">
+  <input type="hidden" name="titles" value="[]" data-guest-titles>
+  <div class="guest-upload-layout">
+    <section class="guest-panel guest-picker">
+      <div class="guest-panel-head">
+        <div><h2>{{ t('guest.choose_images') }}</h2><p class="muted small" data-guest-summary>{{ t('guest.no_files') }}</p></div>
+        <div class="candidate-tools">
+          <button class="button ghost small-button" type="button" data-guest-select-all>{{ t('guest.select_all') }}</button>
+          <button class="button ghost small-button" type="button" data-guest-select-none>{{ t('guest.select_none') }}</button>
+          <button class="button ghost small-button" type="button" data-guest-clear>{{ t('guest.clear') }}</button>
+        </div>
+      </div>
+      <label class="guest-dropzone" data-guest-dropzone>
+        <input type="file" name="files" multiple accept=".png,.jpg,.jpeg,.webp,.gif,image/png,image/jpeg,image/webp,image/gif" data-guest-file-input>
+        <span class="guest-drop-icon" aria-hidden="true">＋</span>
+        <span class="guest-drop-title">{{ t('guest.drop_title') }}</span>
+        <span class="muted small">{{ t('guest.drop_hint', mb=guest_max_file_mb, files=guest_max_files) }}</span>
+      </label>
+      <div class="guest-candidate-grid" data-guest-grid>
+        <p class="candidate-empty">{{ t('guest.candidate_empty') }}</p>
+      </div>
+    </section>
+
+    <aside class="guest-panel guest-options">
+      <div class="guest-panel-head"><h2>{{ t('guest.settings') }}</h2></div>
+      <label>{{ t('guest.album') }}
+        <select name="album_id" data-guest-album data-default-album="{{ guest_default_album_id }}">
+          {% for album in guest_albums %}
+          <option value="{{ album.id }}" {% if album.id == guest_default_album_id %}selected{% endif %}>{{ '—' * album.depth }} {{ album.name }}</option>
+          {% endfor %}
+        </select>
+      </label>
+
+      {% if guest_key_required %}
+      <label>{{ t('guest.key') }}
+        <input type="password" name="key" maxlength="80" autocomplete="off" required placeholder="{% if guest_key_mode == 'daily' %}{{ t('guest.key_placeholder_daily') }}{% elif guest_key_mode == 'once' %}{{ t('guest.key_placeholder_once') }}{% else %}{{ t('guest.key_placeholder_fixed') }}{% endif %}">
+      </label>
+      <p class="muted small">
+        {% if guest_key_mode == 'daily' %}{{ t('guest.key_hint_daily') }}{% elif guest_key_mode == 'once' %}{{ t('guest.key_hint_once') }}{% else %}{{ t('guest.key_hint_fixed') }}{% endif %}
+      </p>
+      {% if not guest_key_configured %}<p class="guest-warning">{{ t('guest.key_missing') }}</p>{% endif %}
+      {% endif %}
+
+      <label>{{ t('guest.description') }}<textarea name="description" rows="3" maxlength="5000" placeholder="{{ t('guest.description_placeholder') }}"></textarea></label>
+
+      <div class="guest-quota">
+        <div class="guest-quota-head">
+          <span>{{ t('guest.total_pool') }}</span>
+          {% if guest_quota_remaining_mb is none %}
+          <strong>{{ t('guest.unlimited') }}</strong>
+          {% else %}
+          <strong>{{ t('guest.remaining', mb=guest_quota_remaining_mb) }}</strong>
+          {% endif %}
+        </div>
+        {% if not guest_total_capacity.unlimited %}<div class="guest-meter" aria-hidden="true"><span style="width: {{ guest_quota_percent }}%"></span></div>{% endif %}
+        <p class="muted small">{% if guest_quota_mb %}{{ t('guest.used', used=guest_quota_used_mb, total=guest_quota_mb) }}{% else %}{{ t('guest.used_no_total', used=guest_quota_used_mb) }}{% endif %}</p>
+        <p class="muted small">{{ t('guest.admin_excluded') }}</p>
+      </div>
+
+      <div class="guest-quota guest-album-capacities">
+        <div class="guest-quota-head">
+          <span>{{ t('guest.album_capacities') }}</span>
+          <span>{{ guest_albums|length }}</span>
+        </div>
+        <ul class="guest-capacity-list">
+          {% for album in guest_albums %}
+          <li class="guest-capacity-row" data-guest-capacity-row="{{ album.id }}">
+            <div class="guest-capacity-label">
+              <span title="{{ album.path }}">{{ album.path }}</span>
+              <small>{{ t('guest.capacity_used', used=album.guest_used_mb) }}</small>
+            </div>
+            <div class="guest-capacity-value">
+              {% if album.guest_unlimited %}
+              <span>{{ t('guest.capacity_unlimited') }}</span>
+              {% elif album.guest_full %}
+              <span class="is-full">{{ t('guest.capacity_full') }}</span>
+              {% else %}
+              <span>{{ t('guest.capacity_remaining', remaining=album.guest_remaining_mb, limit=album.guest_limit_mb) }}</span>
+              {% endif %}
+            </div>
+            {% if not album.guest_unlimited %}<div class="guest-meter" aria-hidden="true"><span style="width: {{ album.guest_percent }}%"></span></div>{% endif %}
+          </li>
+          {% endfor %}
+        </ul>
+      </div>
+
+      {% if guest_cycle_enabled %}
+      <p class="guest-warning guest-cycle-note">{{ t('guest.cycle_on', scope=t('guest.cycle_all') if guest_cycle_scope == 'all' else t('guest.cycle_album')) }}</p>
+      {% else %}
+      <p class="muted small">{{ t('guest.capacity_off') }}</p>
+      {% endif %}
+
+      <div class="guest-submit-row">
+        <span class="muted small" data-guest-selected>{{ t('guest.selected', count=0) }}</span>
+        <button class="button" type="submit" data-guest-submit disabled>{{ t('guest.submit') }}</button>
+      </div>
+      <p class="muted small">{{ t('guest.footer_hint') }}</p>
+    </aside>
+  </div>
+</form>
+{% endif %}
+{% endblock %}
+{% block scripts %}
+<script src="/static/guest_upload.js?v=4" defer></script>
+{% endblock %}

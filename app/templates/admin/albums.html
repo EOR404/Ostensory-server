@@ -1,0 +1,66 @@
+{% extends "admin/base_admin.html" %}
+{% block title %}相册 · 管理后台{% endblock %}
+{% block content %}
+<div class="page-title"><div><p class="eyebrow">ALBUMS</p><h1>相册</h1><p class="muted">相册路径用于客户端同步，修改名称会同步更新子路径。</p></div></div>
+
+<section class="panel">
+  <div class="panel-head"><h2>新建相册</h2></div>
+  <form method="post" action="{{ admin_url('/albums') }}" class="stack-form" autocomplete="off">
+    <input type="hidden" name="csrf" value="{{ csrf_token }}">
+    <div class="three-col">
+      <label>名称<input name="name" required maxlength="80" autocomplete="off"></label>
+      <label>上级相册
+        <select name="parent_id"><option value="">根目录</option>{% for choice in choices %}<option value="{{ choice.id }}">{{ '—' * choice.depth }} {{ choice.name }}</option>{% endfor %}</select>
+      </label>
+      <label>所属匣子
+        <select name="box_id"><option value="">不放入匣子</option>{% for box in boxes %}<option value="{{ box.id }}">{{ box.name }}</option>{% endfor %}</select>
+      </label>
+    </div>
+    <label>描述<input name="description" maxlength="2000" autocomplete="off"></label>
+    <div class="three-col">
+      {% if settings.experimental_features == '1' %}
+      <label>地区规则
+        <select name="region_mode"><option value="inherit">继承</option><option value="block">屏蔽</option><option value="allow">仅允许</option></select>
+      </label>
+      <label>国家代码<input name="region_countries" placeholder="CN, US" autocomplete="off" spellcheck="false" readonly data-unlock-autofill></label>
+      {% endif %}
+      <label>访问密码<input type="password" name="password" placeholder="可留空" autocomplete="new-password" data-lpignore="true" data-1p-ignore="true" readonly data-unlock-autofill></label>
+      <label>访客容量（MB）<input type="number" name="guest_quota_mb" value="0" min="0" max="1048576"><small class="muted">0 表示不单独限制，仍受总容量池约束</small></label>
+    </div>
+    <label class="check"><input type="checkbox" name="nsfw" value="1"> 整个相册标记 NSFW</label>
+    <button class="button" type="submit">创建相册</button>
+  </form>
+</section>
+
+<section class="panel">
+  <div class="panel-head"><h2>全部相册</h2><span class="muted small">{{ albums|length }} 个</span></div>
+  <form id="album-bulk-form" method="post" action="{{ admin_url('/albums/bulk-delete') }}" data-bulk-form data-bulk-group="albums" data-confirm="确定删除选中的空相册？有图片或子相册的相册会被跳过。">
+    <input type="hidden" name="csrf" value="{{ csrf_token }}">
+    <input type="hidden" name="next" value="{{ request.url.path }}{% if request.url.query %}?{{ request.url.query }}{% endif %}">
+    <div class="bulk-bar">
+      <label class="check"><input type="checkbox" data-bulk-all data-bulk-group="albums"> 全选本页</label>
+      <span data-bulk-count data-bulk-group="albums">已选 0 项</span>
+      <button class="button danger" type="submit" data-bulk-submit data-bulk-group="albums" disabled>删除选中空相册</button>
+      <span class="muted small">只删除没有图片和子相册的相册</span>
+    </div>
+  </form>
+  <div class="table-wrap">
+    <table class="table">
+      <thead><tr><th class="select-col"><input type="checkbox" data-bulk-all data-bulk-group="albums" aria-label="全选相册"></th><th>路径</th><th>图片</th><th>NSFW</th>{% if settings.experimental_features == '1' %}<th>规则</th>{% endif %}<th>操作</th></tr></thead>
+      <tbody>
+        {% for album in albums %}
+        <tr>
+          <td class="select-col"><input type="checkbox" name="album_ids" value="{{ album.id }}" form="album-bulk-form" data-bulk-item data-bulk-group="albums" aria-label="选择相册 {{ album.name }}"></td>
+          <td><span class="tree-indent" style="--depth: {{ album.depth }}">{{ '—' * album.depth }}</span> <a href="{{ admin_url('/albums/' ~ album.id) }}">{{ album.name }}</a><div class="muted small">#{{ album.id }} · {{ album.path }}</div></td>
+          <td>{{ album.asset_count }}</td>
+          <td>{{ '是' if album.nsfw else '否' }}</td>
+          {% if settings.experimental_features == '1' %}<td>{% if album.region_mode != 'inherit' %}<span class="mini-tag">{{ album.region_mode }} {{ album.region_countries|country_list }}</span>{% else %}<span class="muted">继承</span>{% endif %}</td>{% endif %}
+          <td class="actions"><a href="{{ admin_url('/albums/' ~ album.id) }}">编辑</a></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% if not albums %}<p class="muted">还没有相册。</p>{% endif %}
+</section>
+{% endblock %}

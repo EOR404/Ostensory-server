@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% block body_class %} page-unlock{% endblock %}
+{% block title %}{{ page_title or t('unlock.title') }} · {{ settings.site_name }}{% endblock %}
+{% block head %}<meta name="robots" content="noindex,nofollow">{% endblock %}
+{% block content %}
+<section class="unlock-page" role="dialog" aria-modal="true" aria-labelledby="unlock-title">
+  <div class="unlock-card{% if nsfw %} is-nsfw{% endif %}">
+    <button class="unlock-cancel" type="button" data-close-unlock aria-label="{{ t('unlock.close') }}">×</button>
+    <div class="lock-glyph large">🔒</div>
+    <p class="eyebrow">PROTECTED</p>
+    <h1 id="unlock-title">{{ t('unlock.heading') }}</h1>
+    <p class="muted">
+      {% if scope == 'album' %}{{ t('unlock.target_album', id=target_id) }}{% elif scope == 'box' %}{{ t('unlock.target_box', id=target_id) }}{% else %}{{ t('unlock.target_image', id=target_id) }}{% endif %}
+    </p>
+    {% if unlock_error %}<div class="notice notice-error">{{ unlock_error }}</div>{% endif %}
+    <form method="post" action="{{ action }}" class="stack-form" data-unlock-form>
+      <input type="hidden" name="csrf" value="{{ csrf_token }}">
+      <input type="hidden" name="next" value="{{ next }}">
+      <label>{{ t('unlock.password') }}
+        <input type="password" name="password" required autofocus autocomplete="current-password">
+      </label>
+      <button class="button" type="submit">{{ t('unlock.submit') }}</button>
+    </form>
+    <p class="muted small">{{ t('unlock.hint') }}</p>
+  </div>
+</section>
+{% endblock %}
+{% block scripts %}
+<script>
+(function () {
+  var close = document.querySelector("[data-close-unlock]");
+  if (close) close.addEventListener("click", function () {
+    if (window.history.length > 1) window.history.back();
+    else window.location.href = "/";
+  });
+  document.addEventListener("keydown", function (event) {
+    if (event.key === "Escape") {
+      if (window.history.length > 1) window.history.back();
+      else window.location.href = "/";
+    }
+  });
+  var form = document.querySelector("[data-unlock-form]");
+  if (form) form.addEventListener("submit", function () {
+    var overlay = document.createElement("div");
+    overlay.className = "loading-overlay";
+    overlay.setAttribute("role", "status");
+    overlay.setAttribute("aria-live", "polite");
+    var card = document.createElement("div");
+    card.className = "loading-card";
+    var spinner = document.createElement("span");
+    spinner.className = "spinner";
+    var text = document.createElement("p");
+    text.textContent = (window.OSTENSORY_I18N && window.OSTENSORY_I18N["unlock.verifying"]) || "Checking password…";
+    card.appendChild(spinner);
+    card.appendChild(text);
+    overlay.appendChild(card);
+    document.body.appendChild(overlay);
+    document.body.classList.add("is-busy");
+  });
+})();
+</script>
+{% endblock %}

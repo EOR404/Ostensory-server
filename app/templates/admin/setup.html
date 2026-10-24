@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="{{ language_code }}" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% if lang == 'en' %}First run · Ostensory{% else %}初始化 · Ostensory{% endif %}</title>
+  <meta name="robots" content="noindex,nofollow">
+  <link rel="icon" href="/static/favicon.svg?v=1">
+  <link rel="stylesheet" href="/static/admin.css?v=19">
+  <script>
+    (function () {
+      try {
+        if (window.localStorage.getItem("ostensory.theme") === "light") {
+          document.documentElement.setAttribute("data-theme", "light");
+        }
+      } catch (error) { /* ignore */ }
+    })();
+  </script>
+</head>
+<body class="auth-body">
+  <div class="auth-tools">
+    {% set other_lang = 'en' if lang == 'zh' else 'zh' %}
+    <a class="topbar-tool" href="/language/{{ other_lang }}?next={{ request.url.path|urlencode }}" title="{{ 'English' if lang == 'zh' else '中文' }}">{{ 'EN' if lang == 'zh' else '中' }}</a>
+    <button class="topbar-tool" type="button" data-admin-theme aria-label="{{ '切换主题' if lang == 'zh' else 'Toggle theme' }}">
+      <svg class="theme-icon theme-icon-sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"></circle><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"></path></svg>
+      <svg class="theme-icon theme-icon-moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 15.2A8.5 8.5 0 0 1 8.8 4a8.5 8.5 0 1 0 11.2 11.2Z"></path></svg>
+    </button>
+  </div>
+  <main class="auth-card">
+    <p class="eyebrow">FIRST RUN</p>
+    <h1>初始化 Ostensory</h1>
+    <p class="muted">创建第一个管理员账户。密码长度不限，建议使用密码管理器保存。</p>
+    {% if setup_error %}<div class="admin-notice error">{{ setup_error }}</div>{% endif %}
+    <form method="post" action="{{ admin_url('/setup') }}" class="stack-form">
+      <input type="hidden" name="csrf" value="{{ csrf_token }}">
+      <label>站点名称<input name="site_name" value="{{ settings.site_name or 'Ostensory' }}" maxlength="80"></label>
+      <label>管理员用户名<input name="username" value="{{ username|default('admin') }}" required autocomplete="username" maxlength="64"></label>
+      <label>密码<input type="password" name="password" required autocomplete="new-password"></label>
+      <label>确认密码<input type="password" name="password2" required autocomplete="new-password"></label>
+      <p class="muted small">密码不强制长度；少于 10 位只会提醒，不会阻止创建。</p>
+      <button class="button" type="submit">创建并进入后台</button>
+    </form>
+    <p class="muted small">默认后台地址是 <code>/admin</code>，登录后可以在设置里改成其他路径。</p>
+  </main>
+  <script src="/static/admin-i18n.js?v=7" defer></script>
+  <script src="/static/admin.js?v=20" defer></script>
+</body>
+</html>
